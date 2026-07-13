@@ -1,6 +1,6 @@
 class Sensor:
-    """Sensor básico para el checkpoint de la Semana 0."""
-
+    def __init__(self, sensor_id: str) -> None:
+        self.sensor_id = sensor_id
+ 
     def read(self) -> float:
-        """Devuelve una lectura simulada de temperatura."""
-        return 23.5
+        return 23.5  # valor fijo por ahora; en la semana 3 sera una API real
