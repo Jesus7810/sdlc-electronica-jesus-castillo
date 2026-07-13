@@ -1,8 +1,6 @@
 # sdlc-electronica-jesus-castillo
 EDSIA - Semana 0
 
-Repositorio del checkpoint correspondiente al programa **"De Electrónica a Desarrollo de Software con IA"**.
-
 ## 📝 Autodiagnóstico
 
 **Años con C/C++**  
