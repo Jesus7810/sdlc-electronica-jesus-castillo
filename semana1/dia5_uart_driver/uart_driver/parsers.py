@@ -22,6 +22,10 @@ class ModbusParser(MessageParser):
     def parse(self, message: bytes | str) -> dict:
         if not self.can_parse(message):
             raise ValueError("Frame Modbus inválido.")
+
+        if not isinstance(message, bytes):
+            raise TypeError("El mensaje Modbus debe ser de tipo bytes.")
+
         return {
             "protocol": "modbus",
             "address": message[0],
@@ -39,7 +43,12 @@ class NMEAParser(MessageParser):
     def parse(self, message: bytes | str) -> dict:
         if not self.can_parse(message):
             raise ValueError("Sentencia NMEA inválida.")
+
+        if not isinstance(message, str):
+            raise TypeError("El mensaje NMEA debe ser texto.")
+
         fields = message.split(",")
+
         return {
             "protocol": "nmea",
             "time": fields[1],
