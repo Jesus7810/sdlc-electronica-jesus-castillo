@@ -10,7 +10,9 @@ class SensorRegistry:
         self._sensors[sensor_id] = sensor
 
     def get(self, sensor_id: str) -> object:
-        if sensor_id in self._sensors:
-            return self._sensors[sensor_id]
+        self._validate_sensor_exists(sensor_id)
+        return self._sensors[sensor_id]
 
-        raise SensorNotFoundError(sensor_id)
+    def _validate_sensor_exists(self, sensor_id: str) -> None:
+        if sensor_id not in self._sensors:
+            raise SensorNotFoundError(sensor_id)
