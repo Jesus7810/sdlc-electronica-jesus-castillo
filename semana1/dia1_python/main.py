@@ -1,10 +1,10 @@
 from sensor_models import Reading, SensorType
 from sensor_utils import (
     is_above_threshold,
-    to_fahrenheit, 
+    is_same_sensor,
     round_reading,
     serialize_reading,
-    is_same_sensor,
+    to_fahrenheit,
 )
 
 #LECTURA 1
