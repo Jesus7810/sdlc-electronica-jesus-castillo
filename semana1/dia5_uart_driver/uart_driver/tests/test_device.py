@@ -1,7 +1,9 @@
+import pytest
+
 from uart_driver.config import UartConfig
 from uart_driver.device import UartDevice
 from uart_driver.parsers import ModbusParser, NMEAParser
-import pytest
+
 
 def test_device_connects() -> None:
     """Debe cambiar su estado al conectarse."""

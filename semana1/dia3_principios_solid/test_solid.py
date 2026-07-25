@@ -1,5 +1,4 @@
 import pytest
-
 from solid import (
     AnomalyDetector,
     BadAnomalyDetector,

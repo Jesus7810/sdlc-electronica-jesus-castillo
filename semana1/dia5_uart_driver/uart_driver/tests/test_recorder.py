@@ -1,5 +1,7 @@
-from uart_driver.recorder import DataRecorder
 import json
+
+from uart_driver.recorder import DataRecorder
+
 
 def test_recorder_creates_file(tmp_path) -> None:
     """Debe crear el archivo al guardar datos."""
