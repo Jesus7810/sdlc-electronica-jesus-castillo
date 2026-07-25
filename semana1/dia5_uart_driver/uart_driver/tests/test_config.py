@@ -1,6 +1,8 @@
 from dataclasses import FrozenInstanceError
-from uart_driver.config import UartConfig
+
 import pytest
+
+from uart_driver.config import UartConfig
 
 
 def test_create_valid_config() -> None:

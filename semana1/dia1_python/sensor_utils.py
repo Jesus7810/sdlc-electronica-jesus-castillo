@@ -1,5 +1,7 @@
-from sensor_models import Reading, SensorType
 from dataclasses import replace
+
+from sensor_models import Reading, SensorType
+
 
 #FUNCION 1
 def is_above_threshold(reading: Reading, threshold: float) -> bool:
