@@ -1,5 +1,6 @@
 import pytest
-from sensor_registry import SensorNotFoundError, SensorRegistry
+
+from semana2.dia3_tdd.sensor_registry import SensorNotFoundError, SensorRegistry
 
 
 def test_get_unknown_sensor_raises() -> None:
