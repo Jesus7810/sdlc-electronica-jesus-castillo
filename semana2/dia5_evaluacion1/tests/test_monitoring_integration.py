@@ -1,9 +1,8 @@
 from datetime import UTC, datetime
 
-from semana2.dia5_evaluacion1.monitoring_service import MonitoringService
-
 from semana2.dia5_evaluacion1.alert_manager import AlertManager
 from semana2.dia5_evaluacion1.anomaly_detector import AnomalyDetector
+from semana2.dia5_evaluacion1.monitoring_service import MonitoringService
 from semana2.dia5_evaluacion1.sensor_reading import MeasurementType
 from semana2.dia5_evaluacion1.sensor_simulator import SensorSimulator
 
