@@ -42,6 +42,25 @@ class FakeReadingRepository:
             ),
             None,
         )
+    
+    def update(
+        self,
+        reading_id: int,
+        value: float | None,
+        unit: str | None,
+    ) -> ReadingModel | None:
+        reading = self.get_by_id(reading_id)
+
+        if reading is None:
+            return None
+
+        if value is not None:
+            reading.value = value
+
+        if unit is not None:
+            reading.unit = unit
+
+        return reading
 
 
 def test_record_saves_valid_reading() -> None:
@@ -91,3 +110,46 @@ def test_get_returns_none_when_reading_does_not_exist() -> None:
     reading = service.get(999)
 
     assert reading is None
+
+def test_update_changes_only_provided_fields() -> None:
+    repo: ReadingRepository = FakeReadingRepository()
+    service = ReadingService(repo)
+    created = service.record("TEMP-01", 25.5, "C")
+
+    updated = service.update(
+        reading_id=created.id,
+        value=30.0,
+        unit=None,
+    )
+
+    assert updated is not None
+    assert updated.value == 30.0
+    assert updated.unit == "C"
+
+def test_update_returns_none_when_reading_does_not_exist() -> None:
+    repo: ReadingRepository = FakeReadingRepository()
+    service = ReadingService(repo)
+
+    updated = service.update(
+        reading_id=999,
+        value=30.0,
+        unit=None,
+    )
+
+    assert updated is None
+
+
+def test_update_rejects_temperature_below_absolute_zero() -> None:
+    repo: ReadingRepository = FakeReadingRepository()
+    service = ReadingService(repo)
+    created = service.record("TEMP-01", 25.5, "C")
+
+    with pytest.raises(
+        ValueError,
+        match="Temperatura por debajo del cero absoluto",
+    ):
+        service.update(
+            reading_id=created.id,
+            value=-274.0,
+            unit=None,
+        )

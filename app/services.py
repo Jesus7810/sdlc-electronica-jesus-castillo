@@ -21,6 +21,13 @@ class ReadingRepository(Protocol):
         reading_id: int,
     ) -> ReadingModel | None: ...
 
+    def update(
+    self,
+    reading_id: int,
+    value: float | None,
+    unit: str | None,
+    ) -> ReadingModel | None: ...
+
 
 class ReadingService:
     """Contiene la lógica de negocio de las lecturas."""
@@ -43,3 +50,16 @@ class ReadingService:
 
     def get(self, reading_id: int) -> ReadingModel | None:
         return self._repo.get_by_id(reading_id)
+
+    def update(
+        self,
+        reading_id: int,
+        value: float | None,
+        unit: str | None,
+    ) -> ReadingModel | None:
+        if value is not None and value < -273.15:
+            raise ValueError(
+                "Temperatura por debajo del cero absoluto"
+            )
+
+        return self._repo.update(reading_id, value, unit)
