@@ -1,9 +1,9 @@
 from datetime import datetime
 
 import pytest
-from app.services import ReadingRepository, ReadingService
 
 from app.models import ReadingModel
+from app.services import ReadingRepository, ReadingService
 
 
 class FakeReadingRepository:
