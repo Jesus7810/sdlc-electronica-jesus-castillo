@@ -62,6 +62,15 @@ class FakeReadingRepository:
 
         return reading
 
+    def delete(self, reading_id: int) -> bool:
+        reading = self.get_by_id(reading_id)
+
+        if reading is None:
+            return False
+
+        self._readings.remove(reading)
+        return True
+
 
 def test_record_saves_valid_reading() -> None:
     repo: ReadingRepository = FakeReadingRepository()
@@ -153,3 +162,21 @@ def test_update_rejects_temperature_below_absolute_zero() -> None:
             value=-274.0,
             unit=None,
         )
+
+def test_delete_removes_existing_reading() -> None:
+    repo: ReadingRepository = FakeReadingRepository()
+    service = ReadingService(repo)
+    created = service.record("TEMP-01", 25.5, "C")
+
+    deleted = service.delete(created.id)
+
+    assert deleted is True
+    assert service.get(created.id) is None
+
+def test_delete_returns_false_when_reading_does_not_exist() -> None:
+    repo: ReadingRepository = FakeReadingRepository()
+    service = ReadingService(repo)
+
+    deleted = service.delete(999)
+
+    assert deleted is False

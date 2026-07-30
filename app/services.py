@@ -28,6 +28,8 @@ class ReadingRepository(Protocol):
     unit: str | None,
     ) -> ReadingModel | None: ...
 
+    def delete(self, reading_id: int) -> bool: ...
+
 
 class ReadingService:
     """Contiene la lógica de negocio de las lecturas."""
@@ -63,3 +65,6 @@ class ReadingService:
             )
 
         return self._repo.update(reading_id, value, unit)
+
+    def delete(self, reading_id: int) -> bool:
+        return self._repo.delete(reading_id)
