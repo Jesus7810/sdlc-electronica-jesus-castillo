@@ -5,8 +5,13 @@ target-version = "py313"
 select = ["E", "F", "I", "UP", "B"]
 
 [tool.pytest.ini_options]
-testpaths = ["semana2"]
-addopts = "--cov=semana2 --cov-report=term-missing --cov-fail-under=80"
+testpaths = ["semana2", "tests"]
+addopts = """
+--cov=semana2
+--cov=app
+--cov-report=term-missing
+--cov-fail-under=80
+"""
 
 [tool.mypy]
 python_version = "3.13"

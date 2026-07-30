@@ -3,14 +3,12 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Query
+from fastapi import Depends, FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import models  # noqa: F401
 from app.database import Base, engine, get_db
-from app.models import ReadingModel
 from app.repositories import SqlAlchemyReadingRepository
 from app.services import ReadingRepository, ReadingService
 
@@ -73,18 +71,19 @@ def create_reading(
 
 @app.get("/readings", response_model=list[SensorReadingOut])
 def get_readings(
-    db: Annotated[Session, Depends(get_db)],
+    service: Annotated[
+        ReadingService,
+        Depends(get_reading_service),
+    ],
+    sensor_id: str | None = None,
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = 10,
 ) -> list[SensorReadingOut]:
-    statement = (
-        select(ReadingModel)
-        .order_by(ReadingModel.id)
-        .offset(skip)
-        .limit(limit)
+    readings = service.list(
+        sensor_id=sensor_id,
+        skip=skip,
+        limit=limit,
     )
-
-    readings = db.scalars(statement).all()
 
     return [
         SensorReadingOut(
@@ -96,3 +95,27 @@ def get_readings(
         )
         for reading in readings
     ]
+
+@app.get("/readings/{reading_id}", response_model=SensorReadingOut)
+def get_reading(
+    reading_id: int,
+    service: Annotated[
+        ReadingService,
+        Depends(get_reading_service),
+    ],
+) -> SensorReadingOut:
+    reading = service.get(reading_id)
+
+    if reading is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Lectura no encontrada",
+        )
+
+    return SensorReadingOut(
+        id=reading.id,
+        sensor_id=reading.sensor_id,
+        value=reading.value,
+        unit=reading.unit,
+        timestamp=reading.timestamp,
+    )
