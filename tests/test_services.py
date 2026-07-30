@@ -83,3 +83,11 @@ def test_get_returns_existing_reading() -> None:
     reading = service.get(created.id)
 
     assert reading == created
+
+def test_get_returns_none_when_reading_does_not_exist() -> None:
+    repo: ReadingRepository = FakeReadingRepository()
+    service = ReadingService(repo)
+
+    reading = service.get(999)
+
+    assert reading is None
