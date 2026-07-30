@@ -16,6 +16,11 @@ class ReadingRepository(Protocol):
         sensor_id: str,
     ) -> list[ReadingModel]: ...
 
+    def get_by_id(
+        self,
+        reading_id: int,
+    ) -> ReadingModel | None: ...
+
 
 class ReadingService:
     """Contiene la lógica de negocio de las lecturas."""
@@ -35,3 +40,6 @@ class ReadingService:
             )
 
         return self._repo.add(sensor_id, value, unit)
+
+    def get(self, reading_id: int) -> ReadingModel | None:
+        return self._repo.get_by_id(reading_id)

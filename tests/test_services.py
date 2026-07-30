@@ -33,6 +33,16 @@ class FakeReadingRepository:
             if reading.sensor_id == sensor_id
         ]
 
+    def get_by_id(self, reading_id: int) -> ReadingModel | None:
+        return next(
+            (
+                reading
+                for reading in self._readings
+                if reading.id == reading_id
+            ),
+            None,
+        )
+
 
 def test_record_saves_valid_reading() -> None:
     repo: ReadingRepository = FakeReadingRepository()
@@ -63,3 +73,13 @@ def test_record_accepts_exact_absolute_zero() -> None:
     reading = service.record("TEMP-01", -273.15, "C")
 
     assert reading.value == -273.15
+
+def test_get_returns_existing_reading() -> None:
+    repo: ReadingRepository = FakeReadingRepository()
+    service = ReadingService(repo)
+
+    created = service.record("TEMP-01", 25.5, "C")
+
+    reading = service.get(created.id)
+
+    assert reading == created
