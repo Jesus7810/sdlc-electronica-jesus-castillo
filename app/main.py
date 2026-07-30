@@ -32,6 +32,10 @@ class SensorReadingOut(SensorReadingIn):
     id: int
     timestamp: datetime
 
+class SensorReadingUpdate(BaseModel):
+    value: float | None = None
+    unit: str | None = None
+
 def get_repository(
     db: Annotated[Session, Depends(get_db)],
 ) -> ReadingRepository:
@@ -119,3 +123,54 @@ def get_reading(
         unit=reading.unit,
         timestamp=reading.timestamp,
     )
+
+@app.patch("/readings/{reading_id}", response_model=SensorReadingOut)
+def update_reading(
+    reading_id: int,
+    changes: SensorReadingUpdate,
+    service: Annotated[
+        ReadingService,
+        Depends(get_reading_service),
+    ],
+) -> SensorReadingOut:
+    try:
+        updated = service.update(
+            reading_id=reading_id,
+            value=changes.value,
+            unit=changes.unit,
+        )
+    except ValueError as error:
+        raise HTTPException(
+            status_code=400,
+            detail=str(error),
+        ) from error
+
+    if updated is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Lectura no encontrada",
+        )
+
+    return SensorReadingOut(
+        id=updated.id,
+        sensor_id=updated.sensor_id,
+        value=updated.value,
+        unit=updated.unit,
+        timestamp=updated.timestamp,
+    )
+
+@app.delete("/readings/{reading_id}", status_code=204)
+def delete_reading(
+    reading_id: int,
+    service: Annotated[
+        ReadingService,
+        Depends(get_reading_service),
+    ],
+) -> None:
+    deleted = service.delete(reading_id)
+
+    if not deleted:
+        raise HTTPException(
+            status_code=404,
+            detail="Lectura no encontrada",
+        )

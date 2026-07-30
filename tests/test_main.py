@@ -72,3 +72,87 @@ def test_get_reading_returns_404_when_not_found() -> None:
     assert response.json() == {
         "detail": "Lectura no encontrada",
     }
+
+def test_update_reading_changes_provided_fields() -> None:
+    create_response = client.post(
+        "/readings",
+        json={
+            "sensor_id": "TEMP-01",
+            "value": 25.5,
+            "unit": "C",
+        },
+    )
+    reading_id = create_response.json()["id"]
+
+    response = client.patch(
+        f"/readings/{reading_id}",
+        json={"value": 30.0},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["sensor_id"] == "TEMP-01"
+    assert response.json()["value"] == 30.0
+    assert response.json()["unit"] == "C"
+
+
+def test_update_reading_returns_404_when_not_found() -> None:
+    response = client.patch(
+        "/readings/999",
+        json={"value": 30.0},
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "detail": "Lectura no encontrada",
+    }
+
+
+def test_update_reading_returns_400_for_invalid_temperature() -> None:
+    create_response = client.post(
+        "/readings",
+        json={
+            "sensor_id": "TEMP-01",
+            "value": 25.5,
+            "unit": "C",
+        },
+    )
+    reading_id = create_response.json()["id"]
+
+    response = client.patch(
+        f"/readings/{reading_id}",
+        json={"value": -274.0},
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "detail": "Temperatura por debajo del cero absoluto",
+    }
+
+def test_delete_reading_removes_existing_reading() -> None:
+    create_response = client.post(
+        "/readings",
+        json={
+            "sensor_id": "TEMP-01",
+            "value": 25.5,
+            "unit": "C",
+        },
+    )
+    reading_id = create_response.json()["id"]
+
+    delete_response = client.delete(f"/readings/{reading_id}")
+
+    assert delete_response.status_code == 204
+    assert delete_response.content == b""
+
+    get_response = client.get(f"/readings/{reading_id}")
+
+    assert get_response.status_code == 404
+
+
+def test_delete_reading_returns_404_when_not_found() -> None:
+    response = client.delete("/readings/999")
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "detail": "Lectura no encontrada",
+    }
