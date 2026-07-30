@@ -143,8 +143,10 @@ Al iniciar la aplicación se crean automáticamente las tablas necesarias en la 
 | Método | Ruta | Descripción | Respuesta exitosa |
 |---|---|---|---|
 | `GET` | `/health` | Comprueba el estado de la API | `200 OK` |
-| `POST` | `/readings` | Registra una lectura | `201 Created` |
-| `GET` | `/readings` | Lista, filtra y pagina las lecturas | `200 OK` |
+| `POST` | `/sensors/{sensor_id}/readings` | Registra una lectura (canónica) | `201 Created` |
+| `GET` | `/sensors/{sensor_id}/readings` | Lista, filtra y pagina (canónica) | `200 OK` |
+| `POST` | `/readings` | Ruta anterior conservada por compatibilidad | `201 Created` |
+| `GET` | `/readings` | Ruta anterior conservada por compatibilidad | `200 OK` |
 | `GET` | `/readings/{reading_id}` | Obtiene una lectura por ID | `200 OK` |
 | `PATCH` | `/readings/{reading_id}` | Actualiza parcialmente una lectura | `200 OK` |
 | `DELETE` | `/readings/{reading_id}` | Elimina una lectura | `204 No Content` |
@@ -164,7 +166,7 @@ con el código HTTP `404 Not Found`.
 Solicitud:
 
 ```http
-POST /readings
+POST /sensors/TEMP-01/readings
 Content-Type: application/json
 ```
 
@@ -172,9 +174,9 @@ Cuerpo:
 
 ```json
 {
-  "sensor_id": "TEMP-01",
   "value": 25.5,
-  "unit": "C"
+  "unit": "C",
+  "timestamp": "2026-07-30T12:00:00"
 }
 ```
 
@@ -190,27 +192,35 @@ Ejemplo de respuesta:
 }
 ```
 
-El identificador y la fecha se generan automáticamente.
+El `sensor_id` se obtiene exclusivamente de la ruta. `timestamp` es opcional y,
+si se omite, el servicio lo genera automáticamente. La combinación de sensor y fecha
+es única: intentar registrar dos lecturas del mismo sensor en el mismo instante
+devuelve `409 Conflict`; repetir un valor en fechas distintas es válido.
 
 ## Listar lecturas
 
 ```http
-GET /readings
+GET /sensors/TEMP-01/readings
 ```
 
 El endpoint admite los siguientes parámetros de consulta:
 
 | Parámetro | Descripción | Valor predeterminado |
 |---|---|---|
-| `sensor_id` | Filtra por identificador del sensor | Sin filtro |
-| `skip` | Cantidad de registros que se omiten | `0` |
-| `limit` | Cantidad máxima de resultados, entre 1 y 100 | `10` |
+| `limit` | Cantidad máxima de resultados, entre 1 y 100 | `50` |
+| `offset` | Cantidad de registros que se omiten | `0` |
+| `from` | Fecha inicial inclusiva en formato ISO 8601 | Sin límite |
+| `to` | Fecha final inclusiva en formato ISO 8601 | Sin límite |
 
 Ejemplo:
 
 ```http
-GET /readings?sensor_id=TEMP-01&skip=0&limit=5
+GET /sensors/TEMP-01/readings?from=2026-07-01T00:00:00&to=2026-07-31T23:59:59&offset=0&limit=5
 ```
+
+Si `from` es posterior a `to`, la API devuelve `400 Bad Request`.
+Fechas mal formadas, `limit` fuera de 1–100 u `offset` negativo devuelven
+`422 Unprocessable Entity`.
 
 ## Consultar una lectura
 
@@ -244,6 +254,13 @@ El campo `sensor_id` no se modifica mediante este endpoint.
 
 Si el dato tiene un formato válido, pero viola una regla de negocio, la API devuelve `400 Bad Request`. Por ejemplo, una temperatura inferior al cero absoluto.
 
+## Códigos de error
+
+- `400 Bad Request`: regla de negocio o intervalo de fechas inválido.
+- `404 Not Found`: la lectura solicitada no existe.
+- `409 Conflict`: ya existe una lectura del mismo sensor con igual `timestamp`.
+- `422 Unprocessable Entity`: cuerpo, fecha o paginación con formato inválido.
+
 ## Eliminar una lectura
 
 ```http
@@ -251,6 +268,10 @@ DELETE /readings/1
 ```
 
 Si la lectura se elimina correctamente, la API devuelve `204 No Content`. Si el identificador no existe, devuelve `404 Not Found`.
+
+En producción, esta operación debe protegerse mediante autorización,
+deshabilitarse o sustituirse por borrado lógico de acuerdo con las reglas y
+requisitos de auditoría del sistema.
 
 ## Base de datos
 
@@ -272,7 +293,7 @@ El proyecto contiene:
 - Pruebas del repositorio.
 - Pruebas de integración de la API.
 - Pruebas de respuestas exitosas.
-- Pruebas de errores `400` y `404`.
+- Pruebas de errores `400`, `404`, `409` y `422`.
 - Pruebas de filtrado y paginación.
 - Pruebas de actualización y eliminación.
 

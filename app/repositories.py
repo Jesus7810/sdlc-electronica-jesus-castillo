@@ -1,4 +1,7 @@
+from datetime import datetime
+
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import ReadingModel
@@ -15,24 +18,39 @@ class SqlAlchemyReadingRepository:
         sensor_id: str,
         value: float,
         unit: str,
+        timestamp: datetime | None = None,
     ) -> ReadingModel:
         reading = ReadingModel(
             sensor_id=sensor_id,
             value=value,
             unit=unit,
+            **({"timestamp": timestamp} if timestamp is not None else {}),
         )
 
-        self._db.add(reading)
-        self._db.commit()
+        try:
+            self._db.add(reading)
+            self._db.commit()
+        except IntegrityError:
+            self._db.rollback()
+            raise
         self._db.refresh(reading)
 
         return reading
 
+    def exists_at(self, sensor_id: str, timestamp: datetime) -> bool:
+        statement = select(ReadingModel.id).where(
+            ReadingModel.sensor_id == sensor_id,
+            ReadingModel.timestamp == timestamp,
+        )
+        return self._db.scalar(statement) is not None
+
     def list(
         self,
         sensor_id: str | None,
-        skip: int,
+        offset: int,
         limit: int,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
     ) -> list[ReadingModel]:
         statement = select(ReadingModel).order_by(ReadingModel.id)
 
@@ -41,7 +59,12 @@ class SqlAlchemyReadingRepository:
                 ReadingModel.sensor_id == sensor_id
             )
 
-        statement = statement.offset(skip).limit(limit)
+        if from_date is not None:
+            statement = statement.where(ReadingModel.timestamp >= from_date)
+        if to_date is not None:
+            statement = statement.where(ReadingModel.timestamp <= to_date)
+
+        statement = statement.offset(offset).limit(limit)
 
         return list(self._db.scalars(statement).all())
 

@@ -15,13 +15,14 @@ class FakeReadingRepository:
         sensor_id: str,
         value: float,
         unit: str,
+        timestamp: datetime | None = None,
     ) -> ReadingModel:
         reading = ReadingModel(
             id=len(self._readings) + 1,
             sensor_id=sensor_id,
             value=value,
             unit=unit,
-            timestamp=datetime.now(),
+            timestamp=timestamp or datetime.now(),
         )
         self._readings.append(reading)
         return reading
@@ -29,8 +30,10 @@ class FakeReadingRepository:
     def list(
         self,
         sensor_id: str | None,
-        skip: int,
+        offset: int,
         limit: int,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
     ) -> list[ReadingModel]:
         readings = self._readings
 
@@ -39,7 +42,25 @@ class FakeReadingRepository:
                 reading for reading in readings if reading.sensor_id == sensor_id
             ]
 
-        return readings[skip : skip + limit]
+        if from_date is not None:
+            readings = [
+                reading for reading in readings
+                if reading.timestamp >= from_date
+            ]
+        if to_date is not None:
+            readings = [
+                reading for reading in readings
+                if reading.timestamp <= to_date
+            ]
+
+        return readings[offset : offset + limit]
+
+    def exists_at(self, sensor_id: str, timestamp: datetime) -> bool:
+        return any(
+            reading.sensor_id == sensor_id
+            and reading.timestamp == timestamp
+            for reading in self._readings
+        )
 
     def get_by_id(self, reading_id: int) -> ReadingModel | None:
         return next(
@@ -202,8 +223,21 @@ def test_list_returns_paginated_readings() -> None:
 
     readings = service.list(
         sensor_id=None,
-        skip=1,
+        offset=1,
         limit=2,
     )
 
     assert readings == [second, third]
+
+
+def test_list_rejects_inverted_date_range() -> None:
+    service = ReadingService(FakeReadingRepository())
+
+    with pytest.raises(ValueError, match="'from'.*posterior"):
+        service.list(
+            sensor_id="TEMP-01",
+            offset=0,
+            limit=50,
+            from_date=datetime(2026, 2, 1),
+            to_date=datetime(2026, 1, 1),
+        )
