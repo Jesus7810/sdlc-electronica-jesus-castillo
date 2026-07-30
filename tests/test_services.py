@@ -26,23 +26,27 @@ class FakeReadingRepository:
         self._readings.append(reading)
         return reading
 
-    def list_for_sensor(self, sensor_id: str) -> list[ReadingModel]:
-        return [
-            reading
-            for reading in self._readings
-            if reading.sensor_id == sensor_id
-        ]
+    def list(
+        self,
+        sensor_id: str | None,
+        skip: int,
+        limit: int,
+    ) -> list[ReadingModel]:
+        readings = self._readings
+
+        if sensor_id is not None:
+            readings = [
+                reading for reading in readings if reading.sensor_id == sensor_id
+            ]
+
+        return readings[skip : skip + limit]
 
     def get_by_id(self, reading_id: int) -> ReadingModel | None:
         return next(
-            (
-                reading
-                for reading in self._readings
-                if reading.id == reading_id
-            ),
+            (reading for reading in self._readings if reading.id == reading_id),
             None,
         )
-    
+
     def update(
         self,
         reading_id: int,
@@ -102,6 +106,7 @@ def test_record_accepts_exact_absolute_zero() -> None:
 
     assert reading.value == -273.15
 
+
 def test_get_returns_existing_reading() -> None:
     repo: ReadingRepository = FakeReadingRepository()
     service = ReadingService(repo)
@@ -112,6 +117,7 @@ def test_get_returns_existing_reading() -> None:
 
     assert reading == created
 
+
 def test_get_returns_none_when_reading_does_not_exist() -> None:
     repo: ReadingRepository = FakeReadingRepository()
     service = ReadingService(repo)
@@ -119,6 +125,7 @@ def test_get_returns_none_when_reading_does_not_exist() -> None:
     reading = service.get(999)
 
     assert reading is None
+
 
 def test_update_changes_only_provided_fields() -> None:
     repo: ReadingRepository = FakeReadingRepository()
@@ -134,6 +141,7 @@ def test_update_changes_only_provided_fields() -> None:
     assert updated is not None
     assert updated.value == 30.0
     assert updated.unit == "C"
+
 
 def test_update_returns_none_when_reading_does_not_exist() -> None:
     repo: ReadingRepository = FakeReadingRepository()
@@ -163,6 +171,7 @@ def test_update_rejects_temperature_below_absolute_zero() -> None:
             unit=None,
         )
 
+
 def test_delete_removes_existing_reading() -> None:
     repo: ReadingRepository = FakeReadingRepository()
     service = ReadingService(repo)
@@ -173,6 +182,7 @@ def test_delete_removes_existing_reading() -> None:
     assert deleted is True
     assert service.get(created.id) is None
 
+
 def test_delete_returns_false_when_reading_does_not_exist() -> None:
     repo: ReadingRepository = FakeReadingRepository()
     service = ReadingService(repo)
@@ -180,3 +190,20 @@ def test_delete_returns_false_when_reading_does_not_exist() -> None:
     deleted = service.delete(999)
 
     assert deleted is False
+
+
+def test_list_returns_paginated_readings() -> None:
+    repo: ReadingRepository = FakeReadingRepository()
+    service = ReadingService(repo)
+
+    service.record("TEMP-01", 20.0, "C")
+    second = service.record("HUM-01", 50.0, "%")
+    third = service.record("TEMP-01", 21.0, "C")
+
+    readings = service.list(
+        sensor_id=None,
+        skip=1,
+        limit=2,
+    )
+
+    assert readings == [second, third]

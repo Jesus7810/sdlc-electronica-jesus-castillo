@@ -11,6 +11,8 @@ from sqlalchemy.orm import Session
 from app import models  # noqa: F401
 from app.database import Base, engine, get_db
 from app.models import ReadingModel
+from app.repositories import SqlAlchemyReadingRepository
+from app.services import ReadingRepository, ReadingService
 
 
 @asynccontextmanager
@@ -32,6 +34,17 @@ class SensorReadingOut(SensorReadingIn):
     id: int
     timestamp: datetime
 
+def get_repository(
+    db: Annotated[Session, Depends(get_db)],
+) -> ReadingRepository:
+    return SqlAlchemyReadingRepository(db)
+
+
+def get_reading_service(
+    repo: Annotated[ReadingRepository, Depends(get_repository)],
+) -> ReadingService:
+    return ReadingService(repo)
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -39,24 +52,23 @@ def health() -> dict[str, str]:
 @app.post("/readings", response_model=SensorReadingOut, status_code=201)
 def create_reading(
     reading: SensorReadingIn,
-    db: Annotated[Session, Depends(get_db)],
+    service: Annotated[
+        ReadingService,
+        Depends(get_reading_service),
+    ],
 ) -> SensorReadingOut:
-    db_reading = ReadingModel(
+    created = service.record(
         sensor_id=reading.sensor_id,
         value=reading.value,
         unit=reading.unit,
     )
 
-    db.add(db_reading)
-    db.commit()
-    db.refresh(db_reading)
-
     return SensorReadingOut(
-        id=db_reading.id,
-        sensor_id=db_reading.sensor_id,
-        value=db_reading.value,
-        unit=db_reading.unit,
-        timestamp=db_reading.timestamp,
+        id=created.id,
+        sensor_id=created.sensor_id,
+        value=created.value,
+        unit=created.unit,
+        timestamp=created.timestamp,
     )
 
 @app.get("/readings", response_model=list[SensorReadingOut])

@@ -11,9 +11,11 @@ class ReadingRepository(Protocol):
         unit: str,
     ) -> ReadingModel: ...
 
-    def list_for_sensor(
+    def list(
         self,
-        sensor_id: str,
+        sensor_id: str | None,
+        skip: int,
+        limit: int,
     ) -> list[ReadingModel]: ...
 
     def get_by_id(
@@ -22,10 +24,10 @@ class ReadingRepository(Protocol):
     ) -> ReadingModel | None: ...
 
     def update(
-    self,
-    reading_id: int,
-    value: float | None,
-    unit: str | None,
+        self,
+        reading_id: int,
+        value: float | None,
+        unit: str | None,
     ) -> ReadingModel | None: ...
 
     def delete(self, reading_id: int) -> bool: ...
@@ -52,6 +54,14 @@ class ReadingService:
 
     def get(self, reading_id: int) -> ReadingModel | None:
         return self._repo.get_by_id(reading_id)
+
+    def list(
+        self,
+        sensor_id: str | None,
+        skip: int,
+        limit: int,
+    ) -> list[ReadingModel]:
+        return self._repo.list(sensor_id, skip, limit)
 
     def update(
         self,
