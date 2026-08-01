@@ -29,3 +29,13 @@ se repitieron pruebas y análisis estático antes de documentar.
 
 La revisión humana debe concentrarse en comprender las reglas de servicio, la
 inyección de repositorios y el contrato REST antes de guardar los cambios.
+
+### Correcciones posteriores a revisión
+
+- Las reglas y tipos compartidos se movieron a `app/domain.py`; los servicios
+  dejaron de importar esquemas Pydantic.
+- `ReadingService` exige explícitamente repositorios de lecturas y sensores.
+- Los cambios de configuración se contrastan con el historial: tipo y unidad
+  quedan bloqueados tras la primera lectura y el rango debe conservar todas las
+  mediciones. Los conflictos con estado persistido se traducen a HTTP 409.
+- SQLite activa claves foráneas en cada conexión y usa borrado en cascada.

@@ -209,6 +209,13 @@ La actualización de sensores es parcial. Por ejemplo:
 }
 ```
 
+Si el sensor todavía no tiene lecturas, su tipo y unidad pueden cambiar juntos
+si la configuración final es compatible. Cuando ya tiene historial, un cambio
+efectivo de tipo o unidad devuelve `409 Conflict`; reenviar el valor actual sí
+es válido. Los límites pueden cambiar únicamente cuando todas las lecturas
+existentes siguen dentro del nuevo intervalo inclusivo. El historial nunca se
+modifica ni elimina para hacer posible un PATCH.
+
 ## Crear una lectura
 
 Solicitud:
@@ -329,6 +336,11 @@ requisitos de auditoría del sistema.
 ## Base de datos
 
 El proyecto utiliza SQLite como sistema de persistencia.
+
+Cada conexión activa `PRAGMA foreign_keys=ON`. La clave foránea de lecturas usa
+`ON DELETE CASCADE`, por lo que eliminar un sensor elimina sus lecturas. Una base
+creada con una versión anterior del modelo requiere una migración Alembic para
+incorporar físicamente esta restricción; `create_all` no altera tablas existentes.
 
 La configuración se encuentra en `app/database.py` y la base local se almacena en:
 
