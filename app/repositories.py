@@ -4,7 +4,46 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models import ReadingModel
+from app.models import ReadingModel, SensorModel
+
+
+class SqlAlchemySensorRepository:
+    """Implementa la persistencia de sensores mediante SQLAlchemy."""
+
+    def __init__(self, db: Session) -> None:
+        self._db = db
+
+    def add(self, sensor: SensorModel) -> SensorModel:
+        try:
+            self._db.add(sensor)
+            self._db.commit()
+        except IntegrityError:
+            self._db.rollback()
+            raise
+        self._db.refresh(sensor)
+        return sensor
+
+    def list(self) -> list[SensorModel]:
+        statement = select(SensorModel).order_by(SensorModel.id)
+        return list(self._db.scalars(statement).all())
+
+    def get_by_id(self, sensor_id: str) -> SensorModel | None:
+        return self._db.get(SensorModel, sensor_id)
+
+    def update(
+        self,
+        sensor: SensorModel,
+        changes: dict[str, object],
+    ) -> SensorModel:
+        for field, value in changes.items():
+            setattr(sensor, field, value)
+        self._db.commit()
+        self._db.refresh(sensor)
+        return sensor
+
+    def delete(self, sensor: SensorModel) -> None:
+        self._db.delete(sensor)
+        self._db.commit()
 
 
 class SqlAlchemyReadingRepository:

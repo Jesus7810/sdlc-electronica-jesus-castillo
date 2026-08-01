@@ -9,6 +9,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
+from app.models import SensorModel
 
 TEST_DATABASE_URL = "sqlite://"
 
@@ -41,6 +42,44 @@ client = TestClient(app)
 @pytest.fixture(autouse=True)
 def prepare_database() -> Generator[None]:
     Base.metadata.create_all(bind=test_engine)
+    with TestingSessionLocal() as session:
+        session.add_all(
+            [
+                SensorModel(
+                    id="TEMP-01",
+                    name="Temperatura",
+                    type="temperature",
+                    unit="C",
+                    min_value=-273.15,
+                    max_value=200.0,
+                ),
+                SensorModel(
+                    id="TEMP-PATH",
+                    name="Temperatura de ruta",
+                    type="temperature",
+                    unit="C",
+                    min_value=-273.15,
+                    max_value=200.0,
+                ),
+                SensorModel(
+                    id="OTHER",
+                    name="Otro sensor",
+                    type="temperature",
+                    unit="C",
+                    min_value=-273.15,
+                    max_value=200.0,
+                ),
+                SensorModel(
+                    id="HUM-01",
+                    name="Humedad",
+                    type="humidity",
+                    unit="%",
+                    min_value=0.0,
+                    max_value=100.0,
+                ),
+            ]
+        )
+        session.commit()
 
     yield
 

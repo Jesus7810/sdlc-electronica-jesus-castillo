@@ -3,7 +3,59 @@ from typing import Protocol
 
 from sqlalchemy.exc import IntegrityError
 
-from app.models import ReadingModel
+from app.models import ReadingModel, SensorModel
+from app.schemas import VALID_UNITS, SensorCreate, SensorUpdate
+
+
+class SensorRepository(Protocol):
+    def add(self, sensor: SensorModel) -> SensorModel: ...
+    def list(self) -> list[SensorModel]: ...
+    def get_by_id(self, sensor_id: str) -> SensorModel | None: ...
+    def update(
+        self, sensor: SensorModel, changes: dict[str, object]
+    ) -> SensorModel: ...
+    def delete(self, sensor: SensorModel) -> None: ...
+
+
+class SensorService:
+    def __init__(self, repo: SensorRepository) -> None:
+        self._repo = repo
+
+    def create(self, data: SensorCreate) -> SensorModel:
+        if self._repo.get_by_id(data.id) is not None:
+            raise ResourceConflictError("El identificador del sensor ya existe")
+        sensor = SensorModel(**data.model_dump())
+        try:
+            return self._repo.add(sensor)
+        except IntegrityError as error:
+            raise ResourceConflictError(
+                "El identificador del sensor ya existe"
+            ) from error
+
+    def list(self) -> list[SensorModel]:
+        return self._repo.list()
+
+    def get(self, sensor_id: str) -> SensorModel:
+        sensor = self._repo.get_by_id(sensor_id)
+        if sensor is None:
+            raise ResourceNotFoundError("Sensor no encontrado")
+        return sensor
+
+    def update(self, sensor_id: str, changes: SensorUpdate) -> SensorModel:
+        sensor = self.get(sensor_id)
+        values = changes.model_dump(exclude_unset=True)
+        configuration = {
+            "name": values.get("name", sensor.name),
+            "type": values.get("type", sensor.type),
+            "unit": values.get("unit", sensor.unit),
+            "min_value": values.get("min_value", sensor.min_value),
+            "max_value": values.get("max_value", sensor.max_value),
+        }
+        SensorCreate(id=sensor.id, **configuration)
+        return self._repo.update(sensor, values)
+
+    def delete(self, sensor_id: str) -> None:
+        self._repo.delete(self.get(sensor_id))
 
 
 class ReadingRepository(Protocol):
@@ -44,8 +96,41 @@ class ReadingRepository(Protocol):
 class ReadingService:
     """Contiene la lógica de negocio de las lecturas."""
 
-    def __init__(self, repo: ReadingRepository) -> None:
+    def __init__(
+        self,
+        repo: ReadingRepository,
+        sensor_repo: SensorRepository | None = None,
+    ) -> None:
         self._repo = repo
+        self._sensor_repo = sensor_repo
+
+    def require_sensor(self, sensor_id: str) -> SensorModel | None:
+        if self._sensor_repo is None:
+            return None
+        sensor = self._sensor_repo.get_by_id(sensor_id)
+        if sensor is None:
+            raise ResourceNotFoundError("Sensor no encontrado")
+        return sensor
+
+    def _validate_for_sensor(
+        self,
+        sensor_id: str,
+        value: float,
+        unit: str,
+    ) -> None:
+        if self._sensor_repo is None:
+            return
+        sensor = self.require_sensor(sensor_id)
+        if sensor is None:
+            return
+        if unit != sensor.unit or VALID_UNITS[sensor.type] != unit:
+            raise DomainValidationError(
+                "La unidad de la lectura no coincide con el sensor"
+            )
+        if not sensor.min_value <= value <= sensor.max_value:
+            raise DomainValidationError(
+                "El valor está fuera del rango operativo del sensor"
+            )
 
     def record(
         self,
@@ -54,6 +139,7 @@ class ReadingService:
         unit: str,
         timestamp: datetime | None = None,
     ) -> ReadingModel:
+        self._validate_for_sensor(sensor_id, value, unit)
         if value < -273.15:
             raise ValueError(
                 "Temperatura por debajo del cero absoluto"
@@ -109,7 +195,16 @@ class ReadingService:
             raise ValueError(
                 "Temperatura por debajo del cero absoluto"
             )
-
+        reading = self._repo.get_by_id(reading_id)
+        if reading is None:
+            return None
+        effective_value = value if value is not None else reading.value
+        effective_unit = unit if unit is not None else reading.unit
+        self._validate_for_sensor(
+            reading.sensor_id,
+            effective_value,
+            effective_unit,
+        )
         return self._repo.update(reading_id, value, unit)
 
     def delete(self, reading_id: int) -> bool:
@@ -122,3 +217,15 @@ class InvalidDateRangeError(ValueError):
 
 class ReadingConflictError(Exception):
     """Indica que una lectura viola una restricción del dominio."""
+
+
+class ResourceNotFoundError(Exception):
+    """Indica que una entidad solicitada no existe."""
+
+
+class ResourceConflictError(Exception):
+    """Indica un conflicto con el estado persistido."""
+
+
+class DomainValidationError(ValueError):
+    """Indica que una operación viola una regla física del dominio."""
