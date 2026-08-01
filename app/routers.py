@@ -2,10 +2,14 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.domain import (
+    DomainValidationError,
+    ResourceConflictError,
+    ResourceNotFoundError,
+)
 from app.models import ReadingModel, SensorModel
 from app.repositories import (
     SqlAlchemyReadingRepository,
@@ -21,13 +25,10 @@ from app.schemas import (
     SensorUpdate,
 )
 from app.services import (
-    DomainValidationError,
     InvalidDateRangeError,
     ReadingConflictError,
     ReadingRepository,
     ReadingService,
-    ResourceConflictError,
-    ResourceNotFoundError,
     SensorRepository,
     SensorService,
 )
@@ -49,8 +50,11 @@ def get_reading_repository(
 
 def get_sensor_service(
     repo: Annotated[SensorRepository, Depends(get_sensor_repository)],
+    reading_repo: Annotated[
+        ReadingRepository, Depends(get_reading_repository)
+    ],
 ) -> SensorService:
-    return SensorService(repo)
+    return SensorService(repo, reading_repo)
 
 
 def get_reading_service(
@@ -81,7 +85,16 @@ def create_sensor(
     service: Annotated[SensorService, Depends(get_sensor_service)],
 ) -> SensorOut:
     try:
-        return sensor_out(service.create(data))
+        return sensor_out(
+            service.create(
+                data.id,
+                data.name,
+                data.type,
+                data.unit,
+                data.min_value,
+                data.max_value,
+            )
+        )
     except ResourceConflictError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
 
@@ -111,11 +124,18 @@ def update_sensor(
     service: Annotated[SensorService, Depends(get_sensor_service)],
 ) -> SensorOut:
     try:
-        return sensor_out(service.update(sensor_id, changes))
+        return sensor_out(
+            service.update(
+                sensor_id,
+                changes.model_dump(exclude_unset=True),
+            )
+        )
     except ResourceNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-    except ValidationError as error:
+    except DomainValidationError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
+    except ResourceConflictError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 @router.delete("/sensors/{sensor_id}", status_code=204)

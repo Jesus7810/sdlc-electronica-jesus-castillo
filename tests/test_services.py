@@ -2,8 +2,8 @@ from datetime import datetime
 
 import pytest
 
-from app.models import ReadingModel
-from app.services import ReadingRepository, ReadingService
+from app.models import ReadingModel, SensorModel
+from app.services import ReadingRepository, ReadingService, SensorRepository
 
 
 class FakeReadingRepository:
@@ -61,6 +61,20 @@ class FakeReadingRepository:
             and reading.timestamp == timestamp
             for reading in self._readings
         )
+    def has_for_sensor(self, sensor_id: str) -> bool:
+        return any(item.sensor_id == sensor_id for item in self._readings)
+
+    def all_within_range(
+        self,
+        sensor_id: str,
+        min_value: float,
+        max_value: float,
+    ) -> bool:
+        return all(
+            min_value <= item.value <= max_value
+            for item in self._readings
+            if item.sensor_id == sensor_id
+        )
 
     def get_by_id(self, reading_id: int) -> ReadingModel | None:
         return next(
@@ -97,9 +111,56 @@ class FakeReadingRepository:
         return True
 
 
+class FakeSensorRepository:
+    def __init__(self) -> None:
+        self._sensors = {
+            "TEMP-01": SensorModel(
+                id="TEMP-01",
+                name="Temperatura",
+                type="temperature",
+                unit="C",
+                min_value=-273.15,
+                max_value=200.0,
+            ),
+            "HUM-01": SensorModel(
+                id="HUM-01",
+                name="Humedad",
+                type="humidity",
+                unit="%",
+                min_value=0.0,
+                max_value=100.0,
+            ),
+        }
+
+    def add(self, sensor: SensorModel) -> SensorModel:
+        self._sensors[sensor.id] = sensor
+        return sensor
+
+    def list(self) -> list[SensorModel]:
+        return list(self._sensors.values())
+
+    def get_by_id(self, sensor_id: str) -> SensorModel | None:
+        return self._sensors.get(sensor_id)
+
+    def update(
+        self, sensor: SensorModel, changes: dict[str, object]
+    ) -> SensorModel:
+        for field, value in changes.items():
+            setattr(sensor, field, value)
+        return sensor
+
+    def delete(self, sensor: SensorModel) -> None:
+        del self._sensors[sensor.id]
+
+
+def make_service(repo: ReadingRepository) -> ReadingService:
+    sensors: SensorRepository = FakeSensorRepository()
+    return ReadingService(repo, sensors)
+
+
 def test_record_saves_valid_reading() -> None:
     repo: ReadingRepository = FakeReadingRepository()
-    service = ReadingService(repo)
+    service = make_service(repo)
 
     reading = service.record("TEMP-01", 25.5, "C")
 
@@ -110,7 +171,7 @@ def test_record_saves_valid_reading() -> None:
 
 def test_record_rejects_temperature_below_absolute_zero() -> None:
     repo: ReadingRepository = FakeReadingRepository()
-    service = ReadingService(repo)
+    service = make_service(repo)
 
     with pytest.raises(
         ValueError,
@@ -121,7 +182,7 @@ def test_record_rejects_temperature_below_absolute_zero() -> None:
 
 def test_record_accepts_exact_absolute_zero() -> None:
     repo: ReadingRepository = FakeReadingRepository()
-    service = ReadingService(repo)
+    service = make_service(repo)
 
     reading = service.record("TEMP-01", -273.15, "C")
 
@@ -130,7 +191,7 @@ def test_record_accepts_exact_absolute_zero() -> None:
 
 def test_get_returns_existing_reading() -> None:
     repo: ReadingRepository = FakeReadingRepository()
-    service = ReadingService(repo)
+    service = make_service(repo)
 
     created = service.record("TEMP-01", 25.5, "C")
 
@@ -141,7 +202,7 @@ def test_get_returns_existing_reading() -> None:
 
 def test_get_returns_none_when_reading_does_not_exist() -> None:
     repo: ReadingRepository = FakeReadingRepository()
-    service = ReadingService(repo)
+    service = make_service(repo)
 
     reading = service.get(999)
 
@@ -150,7 +211,7 @@ def test_get_returns_none_when_reading_does_not_exist() -> None:
 
 def test_update_changes_only_provided_fields() -> None:
     repo: ReadingRepository = FakeReadingRepository()
-    service = ReadingService(repo)
+    service = make_service(repo)
     created = service.record("TEMP-01", 25.5, "C")
 
     updated = service.update(
@@ -166,7 +227,7 @@ def test_update_changes_only_provided_fields() -> None:
 
 def test_update_returns_none_when_reading_does_not_exist() -> None:
     repo: ReadingRepository = FakeReadingRepository()
-    service = ReadingService(repo)
+    service = make_service(repo)
 
     updated = service.update(
         reading_id=999,
@@ -179,7 +240,7 @@ def test_update_returns_none_when_reading_does_not_exist() -> None:
 
 def test_update_rejects_temperature_below_absolute_zero() -> None:
     repo: ReadingRepository = FakeReadingRepository()
-    service = ReadingService(repo)
+    service = make_service(repo)
     created = service.record("TEMP-01", 25.5, "C")
 
     with pytest.raises(
@@ -195,7 +256,7 @@ def test_update_rejects_temperature_below_absolute_zero() -> None:
 
 def test_delete_removes_existing_reading() -> None:
     repo: ReadingRepository = FakeReadingRepository()
-    service = ReadingService(repo)
+    service = make_service(repo)
     created = service.record("TEMP-01", 25.5, "C")
 
     deleted = service.delete(created.id)
@@ -206,7 +267,7 @@ def test_delete_removes_existing_reading() -> None:
 
 def test_delete_returns_false_when_reading_does_not_exist() -> None:
     repo: ReadingRepository = FakeReadingRepository()
-    service = ReadingService(repo)
+    service = make_service(repo)
 
     deleted = service.delete(999)
 
@@ -215,7 +276,7 @@ def test_delete_returns_false_when_reading_does_not_exist() -> None:
 
 def test_list_returns_paginated_readings() -> None:
     repo: ReadingRepository = FakeReadingRepository()
-    service = ReadingService(repo)
+    service = make_service(repo)
 
     service.record("TEMP-01", 20.0, "C")
     second = service.record("HUM-01", 50.0, "%")
@@ -231,7 +292,7 @@ def test_list_returns_paginated_readings() -> None:
 
 
 def test_list_rejects_inverted_date_range() -> None:
-    service = ReadingService(FakeReadingRepository())
+    service = make_service(FakeReadingRepository())
 
     with pytest.raises(ValueError, match="'from'.*posterior"):
         service.list(

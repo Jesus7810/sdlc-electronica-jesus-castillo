@@ -18,6 +18,7 @@ class SensorModel(Base):
     readings: Mapped[list["ReadingModel"]] = relationship(
         back_populates="sensor",
         cascade="all, delete-orphan",
+        passive_deletes=True,
     )
 
 
@@ -33,7 +34,7 @@ class ReadingModel(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     sensor_id: Mapped[str] = mapped_column(
-        ForeignKey("sensors.id"),
+        ForeignKey("sensors.id", ondelete="CASCADE"),
         index=True,
     )
     value: Mapped[float] = mapped_column(Float)

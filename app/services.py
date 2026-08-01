@@ -1,10 +1,16 @@
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Protocol, cast
 
 from sqlalchemy.exc import IntegrityError
 
+from app.domain import (
+    VALID_UNITS,
+    DomainValidationError,
+    ResourceConflictError,
+    ResourceNotFoundError,
+    validate_sensor_configuration,
+)
 from app.models import ReadingModel, SensorModel
-from app.schemas import VALID_UNITS, SensorCreate, SensorUpdate
 
 
 class SensorRepository(Protocol):
@@ -18,13 +24,36 @@ class SensorRepository(Protocol):
 
 
 class SensorService:
-    def __init__(self, repo: SensorRepository) -> None:
+    def __init__(
+        self,
+        repo: SensorRepository,
+        reading_repo: "ReadingRepository",
+    ) -> None:
         self._repo = repo
+        self._reading_repo = reading_repo
 
-    def create(self, data: SensorCreate) -> SensorModel:
-        if self._repo.get_by_id(data.id) is not None:
+    def create(
+        self,
+        sensor_id: str,
+        name: str,
+        sensor_type: str,
+        unit: str,
+        min_value: float,
+        max_value: float,
+    ) -> SensorModel:
+        validate_sensor_configuration(
+            sensor_type, unit, min_value, max_value
+        )
+        if self._repo.get_by_id(sensor_id) is not None:
             raise ResourceConflictError("El identificador del sensor ya existe")
-        sensor = SensorModel(**data.model_dump())
+        sensor = SensorModel(
+            id=sensor_id,
+            name=name,
+            type=sensor_type,
+            unit=unit,
+            min_value=min_value,
+            max_value=max_value,
+        )
         try:
             return self._repo.add(sensor)
         except IntegrityError as error:
@@ -41,18 +70,33 @@ class SensorService:
             raise ResourceNotFoundError("Sensor no encontrado")
         return sensor
 
-    def update(self, sensor_id: str, changes: SensorUpdate) -> SensorModel:
+    def update(
+        self,
+        sensor_id: str,
+        changes: dict[str, object],
+    ) -> SensorModel:
         sensor = self.get(sensor_id)
-        values = changes.model_dump(exclude_unset=True)
-        configuration = {
-            "name": values.get("name", sensor.name),
-            "type": values.get("type", sensor.type),
-            "unit": values.get("unit", sensor.unit),
-            "min_value": values.get("min_value", sensor.min_value),
-            "max_value": values.get("max_value", sensor.max_value),
-        }
-        SensorCreate(id=sensor.id, **configuration)
-        return self._repo.update(sensor, values)
+        sensor_type = cast(str, changes.get("type", sensor.type))
+        unit = cast(str, changes.get("unit", sensor.unit))
+        min_value = cast(float, changes.get("min_value", sensor.min_value))
+        max_value = cast(float, changes.get("max_value", sensor.max_value))
+        validate_sensor_configuration(
+            sensor_type, unit, min_value, max_value
+        )
+        has_readings = self._reading_repo.has_for_sensor(sensor_id)
+        type_changed = sensor_type != sensor.type
+        unit_changed = unit != sensor.unit
+        if has_readings and (type_changed or unit_changed):
+            raise ResourceConflictError(
+                "No se puede cambiar tipo o unidad con lecturas existentes"
+            )
+        if has_readings and not self._reading_repo.all_within_range(
+            sensor_id, min_value, max_value
+        ):
+            raise ResourceConflictError(
+                "El nuevo rango excluye lecturas existentes"
+            )
+        return self._repo.update(sensor, changes)
 
     def delete(self, sensor_id: str) -> None:
         self._repo.delete(self.get(sensor_id))
@@ -68,6 +112,10 @@ class ReadingRepository(Protocol):
     ) -> ReadingModel: ...
 
     def exists_at(self, sensor_id: str, timestamp: datetime) -> bool: ...
+    def has_for_sensor(self, sensor_id: str) -> bool: ...
+    def all_within_range(
+        self, sensor_id: str, min_value: float, max_value: float
+    ) -> bool: ...
 
     def list(
         self,
@@ -99,14 +147,12 @@ class ReadingService:
     def __init__(
         self,
         repo: ReadingRepository,
-        sensor_repo: SensorRepository | None = None,
+        sensor_repo: SensorRepository,
     ) -> None:
         self._repo = repo
         self._sensor_repo = sensor_repo
 
-    def require_sensor(self, sensor_id: str) -> SensorModel | None:
-        if self._sensor_repo is None:
-            return None
+    def require_sensor(self, sensor_id: str) -> SensorModel:
         sensor = self._sensor_repo.get_by_id(sensor_id)
         if sensor is None:
             raise ResourceNotFoundError("Sensor no encontrado")
@@ -118,11 +164,7 @@ class ReadingService:
         value: float,
         unit: str,
     ) -> None:
-        if self._sensor_repo is None:
-            return
         sensor = self.require_sensor(sensor_id)
-        if sensor is None:
-            return
         if unit != sensor.unit or VALID_UNITS[sensor.type] != unit:
             raise DomainValidationError(
                 "La unidad de la lectura no coincide con el sensor"
@@ -139,11 +181,11 @@ class ReadingService:
         unit: str,
         timestamp: datetime | None = None,
     ) -> ReadingModel:
-        self._validate_for_sensor(sensor_id, value, unit)
         if value < -273.15:
             raise ValueError(
                 "Temperatura por debajo del cero absoluto"
             )
+        self._validate_for_sensor(sensor_id, value, unit)
 
         effective_timestamp = timestamp or datetime.now(UTC).replace(tzinfo=None)
         if self._repo.exists_at(sensor_id, effective_timestamp):
@@ -217,15 +259,3 @@ class InvalidDateRangeError(ValueError):
 
 class ReadingConflictError(Exception):
     """Indica que una lectura viola una restricción del dominio."""
-
-
-class ResourceNotFoundError(Exception):
-    """Indica que una entidad solicitada no existe."""
-
-
-class ResourceConflictError(Exception):
-    """Indica un conflicto con el estado persistido."""
-
-
-class DomainValidationError(ValueError):
-    """Indica que una operación viola una regla física del dominio."""

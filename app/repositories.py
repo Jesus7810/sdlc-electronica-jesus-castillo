@@ -83,6 +83,25 @@ class SqlAlchemyReadingRepository:
         )
         return self._db.scalar(statement) is not None
 
+    def has_for_sensor(self, sensor_id: str) -> bool:
+        statement = select(ReadingModel.id).where(
+            ReadingModel.sensor_id == sensor_id
+        )
+        return self._db.scalar(statement) is not None
+
+    def all_within_range(
+        self,
+        sensor_id: str,
+        min_value: float,
+        max_value: float,
+    ) -> bool:
+        statement = select(ReadingModel.id).where(
+            ReadingModel.sensor_id == sensor_id,
+            (ReadingModel.value < min_value)
+            | (ReadingModel.value > max_value),
+        )
+        return self._db.scalar(statement) is None
+
     def list(
         self,
         sensor_id: str | None,

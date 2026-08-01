@@ -1,10 +1,9 @@
 from datetime import datetime
-from typing import Literal, Self
+from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-SensorType = Literal["temperature", "humidity"]
-VALID_UNITS: dict[str, str] = {"temperature": "C", "humidity": "%"}
+from app.domain import SensorType, validate_sensor_configuration
 
 
 class SensorBase(BaseModel):
@@ -16,10 +15,12 @@ class SensorBase(BaseModel):
 
     @model_validator(mode="after")
     def validate_configuration(self) -> Self:
-        if self.min_value >= self.max_value:
-            raise ValueError("min_value debe ser menor que max_value")
-        if VALID_UNITS[self.type] != self.unit:
-            raise ValueError("El tipo y la unidad no son compatibles")
+        validate_sensor_configuration(
+            self.type,
+            self.unit,
+            self.min_value,
+            self.max_value,
+        )
         return self
 
 

@@ -160,3 +160,181 @@ def test_integrated_sensor_reading_flow() -> None:
     assert response.status_code == 200
     assert response.json()["sensor_id"] == "TEMP-01"
     assert response.json()["value"] == 25.5
+
+
+@pytest.mark.parametrize("value", [-40.0, 125.0])
+def test_reading_accepts_operating_range_boundaries(value: float) -> None:
+    client.post("/sensors", json=sensor_payload())
+
+    response = client.post(
+        "/sensors/TEMP-01/readings",
+        json={"value": value, "unit": "C"},
+    )
+
+    assert response.status_code == 201
+
+
+@pytest.mark.parametrize(
+    "reading",
+    [
+        {"value": 20.0, "unit": "%"},
+        {"value": 126.0, "unit": "C"},
+    ],
+)
+def test_rejected_reading_is_not_persisted(
+    reading: dict[str, object],
+) -> None:
+    client.post("/sensors", json=sensor_payload())
+
+    assert client.post(
+        "/sensors/TEMP-01/readings", json=reading
+    ).status_code == 400
+    assert client.get("/sensors/TEMP-01/readings").json() == []
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [{"unit": "%"}, {"value": 126.0}],
+)
+def test_patch_reading_revalidates_sensor_rules(
+    changes: dict[str, object],
+) -> None:
+    client.post("/sensors", json=sensor_payload())
+    created = client.post(
+        "/sensors/TEMP-01/readings",
+        json={"value": 20.0, "unit": "C"},
+    )
+
+    response = client.patch(
+        f"/readings/{created.json()['id']}", json=changes
+    )
+
+    assert response.status_code == 400
+    persisted = client.get(f"/readings/{created.json()['id']}").json()
+    assert persisted["value"] == 20.0
+    assert persisted["unit"] == "C"
+
+
+def test_patch_sensor_rejects_invalid_final_configuration() -> None:
+    client.post("/sensors", json=sensor_payload())
+
+    response = client.patch(
+        "/sensors/TEMP-01", json={"min_value": 125.0}
+    )
+
+    assert response.status_code == 400
+
+
+def test_patch_type_and_unit_without_readings() -> None:
+    client.post("/sensors", json=sensor_payload())
+
+    response = client.patch(
+        "/sensors/TEMP-01",
+        json={
+            "type": "humidity",
+            "unit": "%",
+            "min_value": 0.0,
+            "max_value": 100.0,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["type"] == "humidity"
+    assert response.json()["unit"] == "%"
+
+
+def test_patch_type_or_unit_conflicts_with_existing_readings() -> None:
+    client.post("/sensors", json=sensor_payload())
+    client.post(
+        "/sensors/TEMP-01/readings",
+        json={"value": 20.0, "unit": "C"},
+    )
+
+    response = client.patch(
+        "/sensors/TEMP-01",
+        json={"type": "humidity", "unit": "%"},
+    )
+
+    assert response.status_code == 409
+
+
+def test_patch_same_type_and_unit_is_not_a_conflict() -> None:
+    client.post("/sensors", json=sensor_payload())
+    client.post(
+        "/sensors/TEMP-01/readings",
+        json={"value": 20.0, "unit": "C"},
+    )
+
+    response = client.patch(
+        "/sensors/TEMP-01",
+        json={"type": "temperature", "unit": "C"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_patch_range_rejects_excluded_historical_reading() -> None:
+    client.post("/sensors", json=sensor_payload())
+    client.post(
+        "/sensors/TEMP-01/readings",
+        json={"value": 20.0, "unit": "C"},
+    )
+
+    response = client.patch(
+        "/sensors/TEMP-01", json={"min_value": 21.0}
+    )
+
+    assert response.status_code == 409
+
+
+def test_patch_range_accepts_all_historical_readings() -> None:
+    client.post("/sensors", json=sensor_payload())
+    client.post(
+        "/sensors/TEMP-01/readings",
+        json={"value": 20.0, "unit": "C"},
+    )
+
+    response = client.patch(
+        "/sensors/TEMP-01",
+        json={"min_value": 0.0, "max_value": 100.0},
+    )
+
+    assert response.status_code == 200
+
+
+def test_delete_sensor_cascades_to_readings() -> None:
+    client.post("/sensors", json=sensor_payload())
+    created = client.post(
+        "/sensors/TEMP-01/readings",
+        json={"value": 20.0, "unit": "C"},
+    )
+
+    assert client.delete("/sensors/TEMP-01").status_code == 204
+    assert client.get(f"/readings/{created.json()['id']}").status_code == 404
+
+
+def test_legacy_create_requires_existing_sensor() -> None:
+    response = client.post(
+        "/readings",
+        json={"sensor_id": "UNKNOWN", "value": 20.0, "unit": "C"},
+    )
+
+    assert response.status_code == 404
+
+
+def test_sqlite_foreign_keys_are_enabled() -> None:
+    with test_engine.connect() as connection:
+        enabled = connection.exec_driver_sql("PRAGMA foreign_keys").scalar()
+
+    assert enabled == 1
+
+
+def test_openapi_contains_required_routes() -> None:
+    paths = client.get("/openapi.json").json()["paths"]
+
+    assert {
+        "/sensors",
+        "/sensors/{sensor_id}",
+        "/sensors/{sensor_id}/readings",
+        "/readings/{reading_id}",
+    } <= paths.keys()
