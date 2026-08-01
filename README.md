@@ -2,7 +2,7 @@
 
 Proyecto desarrollado durante el programa **EDSIA — De Electrónica a Desarrollo de Software con IA**.
 
-SensorHub es una API REST para registrar y administrar lecturas de sensores. Está construida con FastAPI, SQLAlchemy y SQLite, aplicando arquitectura por capas, inyección de dependencias, principios SOLID y pruebas automatizadas.
+SensorHub es una API REST para administrar sensores y sus lecturas. Está construida con FastAPI, SQLAlchemy y SQLite, aplicando arquitectura por capas, inyección de dependencias, principios SOLID y pruebas automatizadas.
 
 ## Objetivo del proyecto
 
@@ -23,13 +23,13 @@ La aplicación utiliza una arquitectura por capas:
 ```text
 Cliente HTTP
      ↓
-Endpoints de FastAPI
+Routers de FastAPI
      ↓
-ReadingService
+SensorService / ReadingService
      ↓
-ReadingRepository
+SensorRepository / ReadingRepository
      ↓
-SqlAlchemyReadingRepository
+Repositorios SQLAlchemy
      ↓
 Base de datos SQLite
 ```
@@ -52,7 +52,9 @@ app/
 ├── database.py
 ├── main.py
 ├── models.py
+├── schemas.py
 ├── repositories.py
+├── routers.py
 └── services.py
 
 tests/
@@ -143,6 +145,11 @@ Al iniciar la aplicación se crean automáticamente las tablas necesarias en la 
 | Método | Ruta | Descripción | Respuesta exitosa |
 |---|---|---|---|
 | `GET` | `/health` | Comprueba el estado de la API | `200 OK` |
+| `POST` | `/sensors` | Crea un sensor | `201 Created` |
+| `GET` | `/sensors` | Lista los sensores | `200 OK` |
+| `GET` | `/sensors/{sensor_id}` | Consulta un sensor | `200 OK` |
+| `PATCH` | `/sensors/{sensor_id}` | Actualiza parcialmente un sensor | `200 OK` |
+| `DELETE` | `/sensors/{sensor_id}` | Elimina un sensor | `204 No Content` |
 | `POST` | `/sensors/{sensor_id}/readings` | Registra una lectura (canónica) | `201 Created` |
 | `GET` | `/sensors/{sensor_id}/readings` | Lista, filtra y pagina (canónica) | `200 OK` |
 | `POST` | `/readings` | Ruta anterior conservada por compatibilidad | `201 Created` |
@@ -160,6 +167,47 @@ Cuando una lectura no existe, los endpoints correspondientes devuelven:
 ```
 
 con el código HTTP `404 Not Found`.
+
+## Sensores y rango operativo
+
+Antes de registrar lecturas se crea el sensor:
+
+```http
+POST /sensors
+Content-Type: application/json
+```
+
+```json
+{
+  "id": "TEMP-01",
+  "name": "Temperatura del laboratorio",
+  "type": "temperature",
+  "unit": "C",
+  "min_value": -40,
+  "max_value": 125
+}
+```
+
+Los tipos iniciales y sus unidades son deliberadamente mínimos:
+
+| Tipo | Unidad aceptada |
+|---|---|
+| `temperature` | `C` |
+| `humidity` | `%` |
+
+`min_value` y `max_value` son una decisión adicional del proyecto: representan
+el rango físico u operativo configurado para aceptar una medición y no un umbral
+de anomalía. Debe cumplirse `min_value < max_value`. No se incluyen simuladores,
+alertas ni detección de anomalías en este integrador.
+
+La actualización de sensores es parcial. Por ejemplo:
+
+```json
+{
+  "name": "Cámara fría",
+  "min_value": -80
+}
+```
 
 ## Crear una lectura
 
@@ -196,6 +244,10 @@ El `sensor_id` se obtiene exclusivamente de la ruta. `timestamp` es opcional y,
 si se omite, el servicio lo genera automáticamente. La combinación de sensor y fecha
 es única: intentar registrar dos lecturas del mismo sensor en el mismo instante
 devuelve `409 Conflict`; repetir un valor en fechas distintas es válido.
+
+Antes de guardar, `ReadingService` comprueba que el sensor exista, que la unidad
+coincida y que `min_value <= value <= max_value`. Una lectura rechazada no llega
+al repositorio y, por tanto, no se persiste.
 
 ## Listar lecturas
 
@@ -259,6 +311,7 @@ Si el dato tiene un formato válido, pero viola una regla de negocio, la API dev
 - `400 Bad Request`: regla de negocio o intervalo de fechas inválido.
 - `404 Not Found`: la lectura solicitada no existe.
 - `409 Conflict`: ya existe una lectura del mismo sensor con igual `timestamp`.
+- `409 Conflict`: también se usa al crear un sensor con un ID existente.
 - `422 Unprocessable Entity`: cuerpo, fecha o paginación con formato inválido.
 
 ## Eliminar una lectura
@@ -354,6 +407,10 @@ Durante el desarrollo se han aplicado:
 
 Actualmente, SensorHub permite:
 
+- Crear, listar, consultar, actualizar y eliminar sensores.
+- Validar compatibilidad entre tipo y unidad.
+- Validar lecturas contra el rango operativo del sensor.
+- Relacionar sensores y lecturas mediante clave foránea.
 - Registrar lecturas.
 - Consultar todas las lecturas.
 - Filtrar lecturas por sensor.
