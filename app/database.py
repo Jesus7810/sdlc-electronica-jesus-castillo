@@ -1,3 +1,4 @@
+import os
 import sqlite3
 from collections.abc import Generator
 from typing import Any
@@ -6,7 +7,20 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
-DATABASE_URL = "sqlite:///sensorhub.db"
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///sensorhub.db")
+
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace(
+        "postgres://",
+        "postgresql+psycopg://",
+        1,
+    )
+elif DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace(
+        "postgresql://",
+        "postgresql+psycopg://",
+        1,
+    )
 
 
 @event.listens_for(Engine, "connect")
