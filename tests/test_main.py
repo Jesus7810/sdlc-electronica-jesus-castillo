@@ -85,6 +85,11 @@ def prepare_database() -> Generator[None]:
 
     Base.metadata.drop_all(bind=test_engine)
 
+def test_health_returns_ok() -> None:
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
 
 def test_get_reading_returns_existing_reading() -> None:
     create_response = client.post(
