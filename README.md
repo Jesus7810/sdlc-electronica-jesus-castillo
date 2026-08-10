@@ -90,6 +90,7 @@ Para ejecutar el proyecto se necesita:
 - Python 3.12 o una versión compatible.
 - Git.
 - Un entorno virtual de Python.
+- Docker Desktop o Docker Engine con Docker Compose, para ejecutar la aplicación con PostgreSQL.
 
 ## Instalación
 
@@ -125,6 +126,66 @@ source .venv/bin/activate
 ```bash
 python -m pip install -r requirements.txt
 ```
+
+## Ejecución con Docker Compose
+
+Este es el método recomendado para levantar la API junto con PostgreSQL.
+
+### 1. Configurar las variables de entorno
+
+Crear un archivo `.env` a partir del archivo `.env.example` incluido en el repositorio.
+
+En Windows PowerShell:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+En Linux o macOS:
+
+```bash
+cp .env.example .env
+```
+
+El archivo `.env` contiene la configuración local de PostgreSQL y no debe incluir credenciales de producción.
+
+### 2. Construir e iniciar los servicios
+
+```bash
+docker compose up --build
+```
+
+Docker Compose iniciará:
+
+- La API de SensorHub en `http://localhost:8000`.
+- PostgreSQL 16 como servicio de base de datos.
+- Las migraciones de Alembic antes de iniciar la API.
+
+Comprobar el estado de la API:
+
+```text
+http://localhost:8000/health
+```
+
+Abrir la documentación interactiva:
+
+```text
+http://localhost:8000/docs
+```
+
+### 3. Detener los servicios
+
+```bash
+docker compose down
+```
+
+Para detener los servicios y eliminar también el volumen local de PostgreSQL:
+
+```bash
+docker compose down -v
+```
+
+> **Advertencia:** la opción `-v` elimina los datos almacenados en la base de datos local. Debe utilizarse únicamente cuando se quiera reiniciar completamente PostgreSQL.
 
 ## Ejecución
 
