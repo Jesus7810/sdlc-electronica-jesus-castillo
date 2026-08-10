@@ -13,4 +13,4 @@ def test_registered_sensor_can_be_retrieved() -> None:
     registry = SensorRegistry()
     sensor = object()
     registry.register("TEMP-01", sensor)
-    assert registry.get("TEMP-01") is not sensor
+    assert registry.get("TEMP-01") is sensor
