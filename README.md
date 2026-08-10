@@ -135,10 +135,29 @@ http://127.0.0.1:8000
 
 FastAPI genera documentación interactiva automáticamente:
 
-- Swagger UI: `http://127.0.0.1:8000/docs`
-- ReDoc: `http://127.0.0.1:8000/redoc`
+* Swagger UI: `http://127.0.0.1:8000/docs`
+* ReDoc: `http://127.0.0.1:8000/redoc`
 
-Al iniciar la aplicación se crean automáticamente las tablas necesarias en la base de datos local `sensorhub.db`.
+Antes de iniciar la aplicación, Alembic aplica las migraciones necesarias para mantener actualizado el esquema de la base de datos:
+
+```bash
+alembic upgrade head
+```
+
+## Despliegue en producción
+
+SensorHub está desplegada en Render mediante Docker y utiliza PostgreSQL como base de datos de producción.
+
+* API pública: https://sensorhub-api-0dn6.onrender.com
+* Documentación Swagger: https://sensorhub-api-0dn6.onrender.com/docs
+* Comprobación de estado: https://sensorhub-api-0dn6.onrender.com/health
+
+La infraestructura está definida en `render.yaml`. Cada cambio integrado en la rama `main` inicia automáticamente un nuevo despliegue en Render.
+
+Antes de iniciar Uvicorn, el contenedor ejecuta `alembic upgrade head` para aplicar las migraciones y preparar el esquema de PostgreSQL.
+
+El plan gratuito puede suspender el servicio después de un periodo de inactividad, por lo que la primera solicitud puede tardar aproximadamente un minuto en responder.
+
 
 ## Endpoints
 
