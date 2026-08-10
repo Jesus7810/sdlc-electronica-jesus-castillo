@@ -1,5 +1,5 @@
 [tool.ruff]
-target-version = "py313"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
@@ -14,5 +14,5 @@ addopts = """
 """
 
 [tool.mypy]
-python_version = "3.13"
+python_version = "3.12"
 disallow_untyped_defs = true

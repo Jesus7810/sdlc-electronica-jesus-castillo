@@ -1,8 +1,12 @@
+[![CI](https://github.com/Jesus7810/sdlc-electronica-jesus-castillo/actions/workflows/ci.yml/badge.svg)](https://github.com/Jesus7810/sdlc-electronica-jesus-castillo/actions/workflows/ci.yml)
+
 # SensorHub API
 
 Proyecto desarrollado durante el programa **EDSIA — De Electrónica a Desarrollo de Software con IA**.
 
-SensorHub es una API REST para administrar sensores y sus lecturas. Está construida con FastAPI, SQLAlchemy y SQLite, aplicando arquitectura por capas, inyección de dependencias, principios SOLID y pruebas automatizadas.
+SensorHub es una API REST para administrar sensores y sus lecturas. Está construida con FastAPI y SQLAlchemy, utiliza
+SQLite en el entorno local y PostgreSQL mediante Docker Compose y en producción, aplicando arquitectura por capas,
+inyección de dependencias, principios SOLID y pruebas automatizadas.
 
 ## Objetivo del proyecto
 
@@ -31,7 +35,7 @@ SensorRepository / ReadingRepository
      ↓
 Repositorios SQLAlchemy
      ↓
-Base de datos SQLite
+Base de datos SQLite o PostgreSQL
 ```
 
 ### Responsabilidades
@@ -40,7 +44,7 @@ Base de datos SQLite
 - **Servicio:** contiene las reglas de negocio y coordina las operaciones.
 - **Contrato de repositorio:** define las operaciones de persistencia que necesita el servicio.
 - **Repositorio SQLAlchemy:** implementa el contrato y realiza las operaciones sobre la base de datos.
-- **Modelos:** representan las entidades almacenadas en SQLite.
+- **Modelos:** representan las entidades almacenadas en la base de datos configurada.
 
 Esta separación permite cambiar la tecnología de almacenamiento sin modificar las reglas de negocio.
 
@@ -64,11 +68,14 @@ tests/
 
 ## Tecnologías utilizadas
 
-- Python 3.13
+- Python 3.12
 - FastAPI
 - Pydantic
 - SQLAlchemy 2.x
 - SQLite
+- PostgreSQL 16
+- Alembic
+- Docker y Docker Compose
 - Uvicorn
 - pytest
 - pytest-cov
@@ -80,7 +87,7 @@ tests/
 
 Para ejecutar el proyecto se necesita:
 
-- Python 3.13 o una versión compatible.
+- Python 3.12 o una versión compatible.
 - Git.
 - Un entorno virtual de Python.
 
@@ -89,7 +96,7 @@ Para ejecutar el proyecto se necesita:
 ### 1. Clonar el repositorio
 
 ```bash
-git clone https://github.com/TU-USUARIO/sdlc-electronica-jesus-castillo.git
+git clone https://github.com/Jesus7810/sdlc-electronica-jesus-castillo.git
 cd sdlc-electronica-jesus-castillo
 ```
 
@@ -354,9 +361,13 @@ requisitos de auditoría del sistema.
 
 ## Base de datos
 
-El proyecto utiliza SQLite como sistema de persistencia.
+El motor de persistencia se selecciona mediante la variable de entorno `DATABASE_URL`:
 
-Cada conexión activa `PRAGMA foreign_keys=ON`. La clave foránea de lecturas usa
+- Sin configurar la variable, la aplicación utiliza SQLite y crea localmente `sensorhub.db`.
+- Docker Compose utiliza PostgreSQL 16 en el servicio `db`.
+- Render proporciona una instancia PostgreSQL e inyecta su cadena de conexión mediante `DATABASE_URL`.
+
+Cuando el motor es SQLite, cada conexión activa `PRAGMA foreign_keys=ON`. La clave foránea de lecturas usa
 `ON DELETE CASCADE`, por lo que eliminar un sensor elimina sus lecturas. Una base
 creada con una versión anterior del modelo requiere una migración Alembic para
 incorporar físicamente esta restricción; `create_all` no altera tablas existentes.
@@ -450,7 +461,7 @@ Actualmente, SensorHub permite:
 - Actualizar parcialmente una lectura.
 - Eliminar una lectura.
 - Validar reglas de negocio.
-- Persistir información en SQLite.
+- Persistir información en SQLite o PostgreSQL según el entorno.
 - Probar la API sin modificar la base de datos real.
 
 ## Autor
