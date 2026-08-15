@@ -49,23 +49,19 @@ class FakeReadingRepository:
 
         if from_date is not None:
             readings = [
-                reading for reading in readings
-                if reading.timestamp >= from_date
+                reading for reading in readings if reading.timestamp >= from_date
             ]
         if to_date is not None:
-            readings = [
-                reading for reading in readings
-                if reading.timestamp <= to_date
-            ]
+            readings = [reading for reading in readings if reading.timestamp <= to_date]
 
         return readings[offset : offset + limit]
 
     def exists_at(self, sensor_id: str, timestamp: datetime) -> bool:
         return any(
-            reading.sensor_id == sensor_id
-            and reading.timestamp == timestamp
+            reading.sensor_id == sensor_id and reading.timestamp == timestamp
             for reading in self._readings
         )
+
     def has_for_sensor(self, sensor_id: str) -> bool:
         return any(item.sensor_id == sensor_id for item in self._readings)
 
@@ -126,6 +122,7 @@ class FakeSensorRepository:
                 unit="C",
                 min_value=-273.15,
                 max_value=200.0,
+                threshold=30.0,
             ),
             "HUM-01": SensorModel(
                 id="HUM-01",
@@ -134,6 +131,7 @@ class FakeSensorRepository:
                 unit="%",
                 min_value=0.0,
                 max_value=100.0,
+                threshold=80.0,
             ),
         }
 
@@ -147,9 +145,7 @@ class FakeSensorRepository:
     def get_by_id(self, sensor_id: str) -> SensorModel | None:
         return self._sensors.get(sensor_id)
 
-    def update(
-        self, sensor: SensorModel, changes: dict[str, object]
-    ) -> SensorModel:
+    def update(self, sensor: SensorModel, changes: dict[str, object]) -> SensorModel:
         for field, value in changes.items():
             setattr(sensor, field, value)
         return sensor
@@ -158,9 +154,21 @@ class FakeSensorRepository:
         del self._sensors[sensor.id]
 
 
+class FakeAlertStrategy:
+    def __init__(self) -> None:
+        self.handled_anomalies: list[tuple[ReadingModel, float]] = []
+
+    def handle_anomaly(
+        self,
+        reading: ReadingModel,
+        threshold: float,
+    ) -> None:
+        self.handled_anomalies.append((reading, threshold))
+
+
 def make_service(repo: ReadingRepository) -> ReadingService:
     sensors: SensorRepository = FakeSensorRepository()
-    return ReadingService(repo, sensors)
+    return ReadingService(repo, sensors, FakeAlertStrategy())
 
 
 def test_record_saves_valid_reading() -> None:
@@ -200,11 +208,26 @@ def test_record_allows_humidity_below_absolute_zero_within_range() -> None:
     humidity_sensor = sensors.get_by_id("HUM-01")
     assert humidity_sensor is not None
     humidity_sensor.min_value = -300.0
-    service = ReadingService(repo, sensors)
+    service = ReadingService(repo, sensors, FakeAlertStrategy())
 
     reading = service.record("HUM-01", -274.0, "%")
 
     assert reading.value == -274.0
+
+
+def test_record_handles_anomaly_when_value_exceeds_sensor_threshold() -> None:
+    reading_repo: ReadingRepository = FakeReadingRepository()
+    sensor_repo: SensorRepository = FakeSensorRepository()
+    sensor = sensor_repo.get_by_id("TEMP-01")
+    assert sensor is not None
+    sensor.threshold = 30.0
+
+    alert_strategy = FakeAlertStrategy()
+    service = ReadingService(reading_repo, sensor_repo, alert_strategy)
+
+    reading = service.record("TEMP-01", 31.0, "C")
+
+    assert alert_strategy.handled_anomalies == [(reading, 30.0)]
 
 
 def test_get_returns_existing_reading() -> None:

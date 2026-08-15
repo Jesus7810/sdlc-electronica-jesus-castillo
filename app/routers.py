@@ -10,12 +10,14 @@ from app.domain import (
     ResourceConflictError,
     ResourceNotFoundError,
 )
-from app.models import ReadingModel, SensorModel
+from app.models import AlertModel, ReadingModel, SensorModel
 from app.repositories import (
+    SqlAlchemyAlertRepository,
     SqlAlchemyReadingRepository,
     SqlAlchemySensorRepository,
 )
 from app.schemas import (
+    AlertOut,
     SensorCreate,
     SensorOut,
     SensorReadingCreate,
@@ -25,6 +27,10 @@ from app.schemas import (
     SensorUpdate,
 )
 from app.services import (
+    AlertRepository,
+    AlertService,
+    AlertStrategy,
+    DatabaseAlertStrategy,
     InvalidDateRangeError,
     ReadingConflictError,
     ReadingRepository,
@@ -48,22 +54,37 @@ def get_reading_repository(
     return SqlAlchemyReadingRepository(db)
 
 
+def get_alert_repository(
+    db: Annotated[Session, Depends(get_db)],
+) -> AlertRepository:
+    return SqlAlchemyAlertRepository(db)
+
+
+def get_alert_strategy(
+    repo: Annotated[AlertRepository, Depends(get_alert_repository)],
+) -> AlertStrategy:
+    return DatabaseAlertStrategy(repo)
+
+
+def get_alert_service(
+    repo: Annotated[AlertRepository, Depends(get_alert_repository)],
+) -> AlertService:
+    return AlertService(repo)
+
+
 def get_sensor_service(
     repo: Annotated[SensorRepository, Depends(get_sensor_repository)],
-    reading_repo: Annotated[
-        ReadingRepository, Depends(get_reading_repository)
-    ],
+    reading_repo: Annotated[ReadingRepository, Depends(get_reading_repository)],
 ) -> SensorService:
     return SensorService(repo, reading_repo)
 
 
 def get_reading_service(
-    reading_repo: Annotated[
-        ReadingRepository, Depends(get_reading_repository)
-    ],
+    reading_repo: Annotated[ReadingRepository, Depends(get_reading_repository)],
     sensor_repo: Annotated[SensorRepository, Depends(get_sensor_repository)],
+    alert_strategy: Annotated[AlertStrategy, Depends(get_alert_strategy)],
 ) -> ReadingService:
-    return ReadingService(reading_repo, sensor_repo)
+    return ReadingService(reading_repo, sensor_repo, alert_strategy)
 
 
 def sensor_out(sensor: SensorModel) -> SensorOut:
@@ -72,6 +93,17 @@ def sensor_out(sensor: SensorModel) -> SensorOut:
 
 def reading_out(reading: ReadingModel) -> SensorReadingOut:
     return SensorReadingOut.model_validate(reading)
+
+
+def alert_out(alert: AlertModel) -> AlertOut:
+    return AlertOut.model_validate(alert)
+
+
+@router.get("/alerts", response_model=list[AlertOut])
+def list_alerts(
+    service: Annotated[AlertService, Depends(get_alert_service)],
+) -> list[AlertOut]:
+    return [alert_out(alert) for alert in service.list()]
 
 
 @router.get("/health")
@@ -93,6 +125,7 @@ def create_sensor(
                 data.unit,
                 data.min_value,
                 data.max_value,
+                data.threshold,
             )
         )
     except ResourceConflictError as error:
@@ -214,9 +247,7 @@ def list_sensor_readings(
     except ResourceNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     try:
-        readings = service.list(
-            sensor_id, offset, limit, from_date, to_date
-        )
+        readings = service.list(sensor_id, offset, limit, from_date, to_date)
     except InvalidDateRangeError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     return [reading_out(reading) for reading in readings]

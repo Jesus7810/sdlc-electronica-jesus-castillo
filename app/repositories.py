@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models import ReadingModel, SensorModel
+from app.models import AlertModel, ReadingModel, SensorModel
 
 
 class SqlAlchemySensorRepository:
@@ -84,9 +84,7 @@ class SqlAlchemyReadingRepository:
         return self._db.scalar(statement) is not None
 
     def has_for_sensor(self, sensor_id: str) -> bool:
-        statement = select(ReadingModel.id).where(
-            ReadingModel.sensor_id == sensor_id
-        )
+        statement = select(ReadingModel.id).where(ReadingModel.sensor_id == sensor_id)
         return self._db.scalar(statement) is not None
 
     def all_within_range(
@@ -97,8 +95,7 @@ class SqlAlchemyReadingRepository:
     ) -> bool:
         statement = select(ReadingModel.id).where(
             ReadingModel.sensor_id == sensor_id,
-            (ReadingModel.value < min_value)
-            | (ReadingModel.value > max_value),
+            (ReadingModel.value < min_value) | (ReadingModel.value > max_value),
         )
         return self._db.scalar(statement) is None
 
@@ -113,9 +110,7 @@ class SqlAlchemyReadingRepository:
         statement = select(ReadingModel).order_by(ReadingModel.id)
 
         if sensor_id is not None:
-            statement = statement.where(
-                ReadingModel.sensor_id == sensor_id
-            )
+            statement = statement.where(ReadingModel.sensor_id == sensor_id)
 
         if from_date is not None:
             statement = statement.where(ReadingModel.timestamp >= from_date)
@@ -167,3 +162,36 @@ class SqlAlchemyReadingRepository:
         self._db.commit()
 
         return True
+
+
+class SqlAlchemyAlertRepository:
+    """Implementa la persistencia de alertas mediante SQLAlchemy."""
+
+    def __init__(self, db: Session) -> None:
+        self._db = db
+
+    def add(
+        self,
+        sensor_id: str,
+        reading_id: int,
+        reading_value: float,
+        threshold: float,
+    ) -> AlertModel:
+        alert = AlertModel(
+            sensor_id=sensor_id,
+            reading_id=reading_id,
+            reading_value=reading_value,
+            threshold=threshold,
+        )
+        try:
+            self._db.add(alert)
+            self._db.commit()
+        except IntegrityError:
+            self._db.rollback()
+            raise
+        self._db.refresh(alert)
+        return alert
+
+    def list(self) -> list[AlertModel]:
+        statement = select(AlertModel).order_by(AlertModel.id)
+        return list(self._db.scalars(statement).all())
