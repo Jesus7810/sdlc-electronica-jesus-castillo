@@ -1,9 +1,14 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 
 from app.models import ReadingModel, SensorModel
-from app.services import ReadingRepository, ReadingService, SensorRepository
+from app.services import (
+    InvalidDateRangeError,
+    ReadingRepository,
+    ReadingService,
+    SensorRepository,
+)
 
 
 class FakeReadingRepository:
@@ -189,6 +194,19 @@ def test_record_accepts_exact_absolute_zero() -> None:
     assert reading.value == -273.15
 
 
+def test_record_allows_humidity_below_absolute_zero_within_range() -> None:
+    repo: ReadingRepository = FakeReadingRepository()
+    sensors = FakeSensorRepository()
+    humidity_sensor = sensors.get_by_id("HUM-01")
+    assert humidity_sensor is not None
+    humidity_sensor.min_value = -300.0
+    service = ReadingService(repo, sensors)
+
+    reading = service.record("HUM-01", -274.0, "%")
+
+    assert reading.value == -274.0
+
+
 def test_get_returns_existing_reading() -> None:
     repo: ReadingRepository = FakeReadingRepository()
     service = make_service(repo)
@@ -301,4 +319,17 @@ def test_list_rejects_inverted_date_range() -> None:
             limit=50,
             from_date=datetime(2026, 2, 1),
             to_date=datetime(2026, 1, 1),
+        )
+
+
+def test_list_rejects_mixed_naive_and_aware_dates() -> None:
+    service = make_service(FakeReadingRepository())
+
+    with pytest.raises(InvalidDateRangeError, match="misma zona horaria"):
+        service.list(
+            sensor_id="TEMP-01",
+            offset=0,
+            limit=50,
+            from_date=datetime(2026, 1, 1, tzinfo=UTC),
+            to_date=datetime(2026, 1, 2),
         )

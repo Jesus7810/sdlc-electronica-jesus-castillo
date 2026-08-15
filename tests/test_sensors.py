@@ -113,6 +113,25 @@ def test_humidity_accepts_percent_unit() -> None:
     assert client.post("/sensors", json=payload).status_code == 201
 
 
+def test_humidity_reading_rejects_celsius_unit() -> None:
+    payload = {
+        "id": "HUM-01",
+        "name": "Humedad",
+        "type": "humidity",
+        "unit": "%",
+        "min_value": 0.0,
+        "max_value": 100.0,
+    }
+    assert client.post("/sensors", json=payload).status_code == 201
+
+    response = client.post(
+        "/sensors/HUM-01/readings",
+        json={"value": 50.0, "unit": "C"},
+    )
+
+    assert response.status_code == 400
+
+
 def test_reading_requires_existing_sensor() -> None:
     response = client.post(
         "/sensors/UNKNOWN/readings",
@@ -146,6 +165,48 @@ def test_reading_validates_unit_and_operating_range() -> None:
     assert wrong_unit.status_code == 400
     assert below.status_code == 400
     assert above.status_code == 400
+
+
+@pytest.mark.parametrize(
+    "reading",
+    [
+        {"value": None, "unit": "C"},
+        {"value": 20.0, "unit": None},
+    ],
+)
+def test_reading_create_rejects_null_value_or_unit(
+    reading: dict[str, object],
+) -> None:
+    client.post("/sensors", json=sensor_payload())
+
+    response = client.post("/sensors/TEMP-01/readings", json=reading)
+
+    assert response.status_code == 422
+
+
+def test_reading_create_rejects_malformed_timestamp() -> None:
+    client.post("/sensors", json=sensor_payload())
+
+    response = client.post(
+        "/sensors/TEMP-01/readings",
+        json={"value": 20.0, "unit": "C", "timestamp": "not-a-timestamp"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_list_readings_rejects_mixed_naive_and_aware_dates() -> None:
+    client.post("/sensors", json=sensor_payload())
+
+    response = client.get(
+        "/sensors/TEMP-01/readings",
+        params={
+            "from": "2026-01-01T00:00:00Z",
+            "to": "2026-01-02T00:00:00",
+        },
+    )
+
+    assert response.status_code == 400
 
 
 def test_integrated_sensor_reading_flow() -> None:
