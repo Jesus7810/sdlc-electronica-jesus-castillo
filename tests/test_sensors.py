@@ -21,6 +21,7 @@ def sensor_payload(sensor_id: str = "TEMP-01") -> dict[str, object]:
         "unit": "C",
         "min_value": -40.0,
         "max_value": 125.0,
+        "threshold": 30.0,
     }
 
 
@@ -108,6 +109,7 @@ def test_humidity_accepts_percent_unit() -> None:
         "unit": "%",
         "min_value": 0.0,
         "max_value": 100.0,
+        "threshold": 80.0,
     }
 
     assert client.post("/sensors", json=payload).status_code == 201
@@ -121,6 +123,7 @@ def test_humidity_reading_rejects_celsius_unit() -> None:
         "unit": "%",
         "min_value": 0.0,
         "max_value": 100.0,
+        "threshold": 80.0,
     }
     assert client.post("/sensors", json=payload).status_code == 201
 
@@ -247,9 +250,7 @@ def test_rejected_reading_is_not_persisted(
 ) -> None:
     client.post("/sensors", json=sensor_payload())
 
-    assert client.post(
-        "/sensors/TEMP-01/readings", json=reading
-    ).status_code == 400
+    assert client.post("/sensors/TEMP-01/readings", json=reading).status_code == 400
     assert client.get("/sensors/TEMP-01/readings").json() == []
 
 
@@ -266,9 +267,7 @@ def test_patch_reading_revalidates_sensor_rules(
         json={"value": 20.0, "unit": "C"},
     )
 
-    response = client.patch(
-        f"/readings/{created.json()['id']}", json=changes
-    )
+    response = client.patch(f"/readings/{created.json()['id']}", json=changes)
 
     assert response.status_code == 400
     persisted = client.get(f"/readings/{created.json()['id']}").json()
@@ -279,9 +278,7 @@ def test_patch_reading_revalidates_sensor_rules(
 def test_patch_sensor_rejects_invalid_final_configuration() -> None:
     client.post("/sensors", json=sensor_payload())
 
-    response = client.patch(
-        "/sensors/TEMP-01", json={"min_value": 125.0}
-    )
+    response = client.patch("/sensors/TEMP-01", json={"min_value": 125.0})
 
     assert response.status_code == 400
 
@@ -341,9 +338,7 @@ def test_patch_range_rejects_excluded_historical_reading() -> None:
         json={"value": 20.0, "unit": "C"},
     )
 
-    response = client.patch(
-        "/sensors/TEMP-01", json={"min_value": 21.0}
-    )
+    response = client.patch("/sensors/TEMP-01", json={"min_value": 21.0})
 
     assert response.status_code == 409
 
@@ -399,3 +394,55 @@ def test_openapi_contains_required_routes() -> None:
         "/sensors/{sensor_id}/readings",
         "/readings/{reading_id}",
     } <= paths.keys()
+
+
+def test_create_sensor_persists_threshold() -> None:
+    payload = sensor_payload()
+    payload["threshold"] = 30.0
+
+    response = client.post("/sensors", json=payload)
+
+    assert response.status_code == 201
+    assert response.json()["threshold"] == 30.0
+
+    persisted = client.get("/sensors/TEMP-01")
+    assert persisted.json()["threshold"] == 30.0
+
+
+def test_reading_above_threshold_creates_queryable_alert() -> None:
+    client.post("/sensors", json=sensor_payload())
+
+    reading_response = client.post(
+        "/sensors/TEMP-01/readings",
+        json={"value": 31.0, "unit": "C"},
+    )
+
+    assert reading_response.status_code == 201
+
+    response = client.get("/alerts")
+
+    assert response.status_code == 200
+    assert len(response.json()) == 1
+
+    alert = response.json()[0]
+    assert alert["sensor_id"] == "TEMP-01"
+    assert alert["reading_id"] == reading_response.json()["id"]
+    assert alert["reading_value"] == 31.0
+    assert alert["threshold"] == 30.0
+    assert "created_at" in alert
+
+
+def test_reading_at_threshold_does_not_create_alert() -> None:
+    client.post("/sensors", json=sensor_payload())
+
+    reading_response = client.post(
+        "/sensors/TEMP-01/readings",
+        json={"value": 30.0, "unit": "C"},
+    )
+
+    assert reading_response.status_code == 201
+
+    response = client.get("/alerts")
+
+    assert response.status_code == 200
+    assert response.json() == []

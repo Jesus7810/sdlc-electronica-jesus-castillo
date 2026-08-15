@@ -15,6 +15,7 @@ class SensorModel(Base):
     unit: Mapped[str] = mapped_column(String(20))
     min_value: Mapped[float] = mapped_column(Float)
     max_value: Mapped[float] = mapped_column(Float)
+    threshold: Mapped[float] = mapped_column(Float)
     readings: Mapped[list["ReadingModel"]] = relationship(
         back_populates="sensor",
         cascade="all, delete-orphan",
@@ -44,3 +45,23 @@ class ReadingModel(Base):
         server_default=func.now(),
     )
     sensor: Mapped[SensorModel] = relationship(back_populates="readings")
+
+
+class AlertModel(Base):
+    __tablename__ = "alerts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    sensor_id: Mapped[str] = mapped_column(
+        ForeignKey("sensors.id", ondelete="CASCADE"),
+        index=True,
+    )
+    reading_id: Mapped[int] = mapped_column(
+        ForeignKey("readings.id", ondelete="CASCADE"),
+        index=True,
+    )
+    reading_value: Mapped[float] = mapped_column(Float)
+    threshold: Mapped[float] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+    )

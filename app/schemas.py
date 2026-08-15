@@ -12,6 +12,7 @@ class SensorBase(BaseModel):
     unit: str = Field(min_length=1, max_length=20)
     min_value: float
     max_value: float
+    threshold: float
 
     @model_validator(mode="after")
     def validate_configuration(self) -> Self:
@@ -20,6 +21,7 @@ class SensorBase(BaseModel):
             self.unit,
             self.min_value,
             self.max_value,
+            self.threshold,
         )
         return self
 
@@ -38,6 +40,7 @@ class SensorUpdate(BaseModel):
     unit: str | None = Field(default=None, min_length=1, max_length=20)
     min_value: float | None = None
     max_value: float | None = None
+    threshold: float | None = None
 
 
 class SensorReadingCreate(BaseModel):
@@ -62,3 +65,14 @@ class SensorReadingOut(SensorReadingIn):
 class SensorReadingUpdate(BaseModel):
     value: float | None = None
     unit: str | None = Field(default=None, min_length=1, max_length=20)
+
+
+class AlertOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    sensor_id: str
+    reading_id: int
+    reading_value: float
+    threshold: float
+    created_at: datetime

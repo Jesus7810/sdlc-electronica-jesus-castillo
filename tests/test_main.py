@@ -52,6 +52,7 @@ def prepare_database() -> Generator[None]:
                     unit="C",
                     min_value=-273.15,
                     max_value=200.0,
+                    threshold=30.0,
                 ),
                 SensorModel(
                     id="TEMP-PATH",
@@ -60,6 +61,7 @@ def prepare_database() -> Generator[None]:
                     unit="C",
                     min_value=-273.15,
                     max_value=200.0,
+                    threshold=30.0,
                 ),
                 SensorModel(
                     id="OTHER",
@@ -68,6 +70,7 @@ def prepare_database() -> Generator[None]:
                     unit="C",
                     min_value=-273.15,
                     max_value=200.0,
+                    threshold=30.0,
                 ),
                 SensorModel(
                     id="HUM-01",
@@ -76,6 +79,7 @@ def prepare_database() -> Generator[None]:
                     unit="%",
                     min_value=0.0,
                     max_value=100.0,
+                    threshold=80.0,
                 ),
             ]
         )
@@ -85,11 +89,13 @@ def prepare_database() -> Generator[None]:
 
     Base.metadata.drop_all(bind=test_engine)
 
+
 def test_health_returns_ok() -> None:
     response = client.get("/health")
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
 
 def test_get_reading_returns_existing_reading() -> None:
     create_response = client.post(
@@ -117,6 +123,7 @@ def test_get_reading_returns_404_when_not_found() -> None:
     assert response.json() == {
         "detail": "Lectura no encontrada",
     }
+
 
 def test_update_reading_changes_provided_fields() -> None:
     create_response = client.post(
@@ -172,6 +179,7 @@ def test_update_reading_returns_400_for_invalid_temperature() -> None:
     assert response.json() == {
         "detail": "Temperatura por debajo del cero absoluto",
     }
+
 
 def test_delete_reading_removes_existing_reading() -> None:
     create_response = client.post(
