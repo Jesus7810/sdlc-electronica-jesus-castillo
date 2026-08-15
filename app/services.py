@@ -165,6 +165,8 @@ class ReadingService:
         unit: str,
     ) -> None:
         sensor = self.require_sensor(sensor_id)
+        if sensor.type == "temperature" and value < -273.15:
+            raise ValueError("Temperatura por debajo del cero absoluto")
         if unit != sensor.unit or VALID_UNITS[sensor.type] != unit:
             raise DomainValidationError(
                 "La unidad de la lectura no coincide con el sensor"
@@ -181,10 +183,6 @@ class ReadingService:
         unit: str,
         timestamp: datetime | None = None,
     ) -> ReadingModel:
-        if value < -273.15:
-            raise ValueError(
-                "Temperatura por debajo del cero absoluto"
-            )
         self._validate_for_sensor(sensor_id, value, unit)
 
         effective_timestamp = timestamp or datetime.now(UTC).replace(tzinfo=None)
@@ -215,10 +213,17 @@ class ReadingService:
         from_date: datetime | None = None,
         to_date: datetime | None = None,
     ) -> list[ReadingModel]:
-        if from_date is not None and to_date is not None and from_date > to_date:
-            raise InvalidDateRangeError(
-                "El parámetro 'from' no puede ser posterior a 'to'"
-            )
+        if from_date is not None and to_date is not None:
+            from_is_naive = from_date.tzinfo is None
+            to_is_naive = to_date.tzinfo is None
+            if from_is_naive != to_is_naive:
+                raise InvalidDateRangeError(
+                    "Los parámetros 'from' y 'to' deben usar la misma zona horaria"
+                )
+            if from_date > to_date:
+                raise InvalidDateRangeError(
+                    "El parámetro 'from' no puede ser posterior a 'to'"
+                )
         return self._repo.list(
             sensor_id,
             offset,
@@ -233,10 +238,6 @@ class ReadingService:
         value: float | None,
         unit: str | None,
     ) -> ReadingModel | None:
-        if value is not None and value < -273.15:
-            raise ValueError(
-                "Temperatura por debajo del cero absoluto"
-            )
         reading = self._repo.get_by_id(reading_id)
         if reading is None:
             return None
