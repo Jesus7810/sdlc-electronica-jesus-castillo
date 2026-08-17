@@ -10,7 +10,7 @@ from app.domain import (
     ResourceNotFoundError,
     validate_sensor_configuration,
 )
-from app.models import ReadingModel, SensorModel
+from app.models import AlertModel, ReadingModel, SensorModel
 
 
 class SensorRepository(Protocol):
@@ -40,9 +40,14 @@ class SensorService:
         unit: str,
         min_value: float,
         max_value: float,
+        threshold: float,
     ) -> SensorModel:
         validate_sensor_configuration(
-            sensor_type, unit, min_value, max_value
+            sensor_type,
+            unit,
+            min_value,
+            max_value,
+            threshold,
         )
         if self._repo.get_by_id(sensor_id) is not None:
             raise ResourceConflictError("El identificador del sensor ya existe")
@@ -53,6 +58,7 @@ class SensorService:
             unit=unit,
             min_value=min_value,
             max_value=max_value,
+            threshold=threshold,
         )
         try:
             return self._repo.add(sensor)
@@ -80,8 +86,9 @@ class SensorService:
         unit = cast(str, changes.get("unit", sensor.unit))
         min_value = cast(float, changes.get("min_value", sensor.min_value))
         max_value = cast(float, changes.get("max_value", sensor.max_value))
+        threshold = cast(float, changes.get("threshold", sensor.threshold))
         validate_sensor_configuration(
-            sensor_type, unit, min_value, max_value
+            sensor_type, unit, min_value, max_value, threshold
         )
         has_readings = self._reading_repo.has_for_sensor(sensor_id)
         type_changed = sensor_type != sensor.type
@@ -93,9 +100,7 @@ class SensorService:
         if has_readings and not self._reading_repo.all_within_range(
             sensor_id, min_value, max_value
         ):
-            raise ResourceConflictError(
-                "El nuevo rango excluye lecturas existentes"
-            )
+            raise ResourceConflictError("El nuevo rango excluye lecturas existentes")
         return self._repo.update(sensor, changes)
 
     def delete(self, sensor_id: str) -> None:
@@ -141,6 +146,51 @@ class ReadingRepository(Protocol):
     def delete(self, reading_id: int) -> bool: ...
 
 
+class AlertRepository(Protocol):
+    def add(
+        self,
+        sensor_id: str,
+        reading_id: int,
+        reading_value: float,
+        threshold: float,
+    ) -> AlertModel: ...
+
+    def list(self) -> list[AlertModel]: ...
+
+
+class AlertStrategy(Protocol):
+    def handle_anomaly(
+        self,
+        reading: ReadingModel,
+        threshold: float,
+    ) -> None: ...
+
+
+class DatabaseAlertStrategy:
+    def __init__(self, repo: AlertRepository) -> None:
+        self._repo = repo
+
+    def handle_anomaly(
+        self,
+        reading: ReadingModel,
+        threshold: float,
+    ) -> None:
+        self._repo.add(
+            reading.sensor_id,
+            reading.id,
+            reading.value,
+            threshold,
+        )
+
+
+class AlertService:
+    def __init__(self, repo: AlertRepository) -> None:
+        self._repo = repo
+
+    def list(self) -> list[AlertModel]:
+        return self._repo.list()
+
+
 class ReadingService:
     """Contiene la lógica de negocio de las lecturas."""
 
@@ -148,9 +198,11 @@ class ReadingService:
         self,
         repo: ReadingRepository,
         sensor_repo: SensorRepository,
+        alert_strategy: AlertStrategy,
     ) -> None:
         self._repo = repo
         self._sensor_repo = sensor_repo
+        self._alert_strategy = alert_strategy
 
     def require_sensor(self, sensor_id: str) -> SensorModel:
         sensor = self._sensor_repo.get_by_id(sensor_id)
@@ -163,8 +215,10 @@ class ReadingService:
         sensor_id: str,
         value: float,
         unit: str,
-    ) -> None:
+    ) -> SensorModel:
         sensor = self.require_sensor(sensor_id)
+        if sensor.type == "temperature" and value < -273.15:
+            raise ValueError("Temperatura por debajo del cero absoluto")
         if unit != sensor.unit or VALID_UNITS[sensor.type] != unit:
             raise DomainValidationError(
                 "La unidad de la lectura no coincide con el sensor"
@@ -173,6 +227,7 @@ class ReadingService:
             raise DomainValidationError(
                 "El valor está fuera del rango operativo del sensor"
             )
+        return sensor
 
     def record(
         self,
@@ -181,11 +236,7 @@ class ReadingService:
         unit: str,
         timestamp: datetime | None = None,
     ) -> ReadingModel:
-        if value < -273.15:
-            raise ValueError(
-                "Temperatura por debajo del cero absoluto"
-            )
-        self._validate_for_sensor(sensor_id, value, unit)
+        sensor = self._validate_for_sensor(sensor_id, value, unit)
 
         effective_timestamp = timestamp or datetime.now(UTC).replace(tzinfo=None)
         if self._repo.exists_at(sensor_id, effective_timestamp):
@@ -193,7 +244,7 @@ class ReadingService:
                 "Ya existe una lectura para este sensor en esa fecha"
             )
         try:
-            return self._repo.add(
+            created = self._repo.add(
                 sensor_id,
                 value,
                 unit,
@@ -203,6 +254,10 @@ class ReadingService:
             raise ReadingConflictError(
                 "Ya existe una lectura para este sensor en esa fecha"
             ) from error
+        if created.value > sensor.threshold:
+            self._alert_strategy.handle_anomaly(created, sensor.threshold)
+
+        return created
 
     def get(self, reading_id: int) -> ReadingModel | None:
         return self._repo.get_by_id(reading_id)
@@ -215,10 +270,17 @@ class ReadingService:
         from_date: datetime | None = None,
         to_date: datetime | None = None,
     ) -> list[ReadingModel]:
-        if from_date is not None and to_date is not None and from_date > to_date:
-            raise InvalidDateRangeError(
-                "El parámetro 'from' no puede ser posterior a 'to'"
-            )
+        if from_date is not None and to_date is not None:
+            from_is_naive = from_date.tzinfo is None
+            to_is_naive = to_date.tzinfo is None
+            if from_is_naive != to_is_naive:
+                raise InvalidDateRangeError(
+                    "Los parámetros 'from' y 'to' deben usar la misma zona horaria"
+                )
+            if from_date > to_date:
+                raise InvalidDateRangeError(
+                    "El parámetro 'from' no puede ser posterior a 'to'"
+                )
         return self._repo.list(
             sensor_id,
             offset,
@@ -233,10 +295,6 @@ class ReadingService:
         value: float | None,
         unit: str | None,
     ) -> ReadingModel | None:
-        if value is not None and value < -273.15:
-            raise ValueError(
-                "Temperatura por debajo del cero absoluto"
-            )
         reading = self._repo.get_by_id(reading_id)
         if reading is None:
             return None

@@ -9,9 +9,14 @@ def validate_sensor_configuration(
     unit: str,
     min_value: float,
     max_value: float,
+    threshold: float,
 ) -> None:
     if min_value >= max_value:
         raise DomainValidationError("min_value debe ser menor que max_value")
+    if not min_value <= threshold < max_value:
+        raise DomainValidationError(
+            "threshold debe estar dentro del rango operativo del sensor"
+        )
     if VALID_UNITS.get(sensor_type) != unit:
         raise DomainValidationError("El tipo y la unidad no son compatibles")
 
