@@ -204,7 +204,7 @@ def test_reading_create_rejects_malformed_timestamp() -> None:
     assert response.status_code == 422
 
 
-def test_list_readings_rejects_mixed_naive_and_aware_dates() -> None:
+def test_list_readings_rejects_naive_date_filter() -> None:
     client.post("/sensors", json=sensor_payload())
 
     response = client.get(
@@ -215,7 +215,7 @@ def test_list_readings_rejects_mixed_naive_and_aware_dates() -> None:
         },
     )
 
-    assert response.status_code == 400
+    assert response.status_code == 422
 
 
 def test_integrated_sensor_reading_flow() -> None:
@@ -264,7 +264,7 @@ def test_rejected_reading_is_not_persisted(
     "changes",
     [{"unit": "%"}, {"value": 126.0}],
 )
-def test_patch_reading_revalidates_sensor_rules(
+def test_patch_reading_is_not_part_of_the_public_contract(
     changes: dict[str, object],
 ) -> None:
     client.post("/sensors", json=sensor_payload())
@@ -275,7 +275,7 @@ def test_patch_reading_revalidates_sensor_rules(
 
     response = client.patch(f"/readings/{created.json()['id']}", json=changes)
 
-    assert response.status_code == 400
+    assert response.status_code == 405
     persisted = client.get(f"/readings/{created.json()['id']}").json()
     assert persisted["value"] == 20.0
     assert persisted["unit"] == "C"

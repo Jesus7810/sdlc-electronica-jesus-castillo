@@ -4,7 +4,7 @@ import pytest
 
 from app.models import ReadingModel, SensorModel
 from app.services import (
-    InvalidDateRangeError,
+    InvalidTimestampError,
     ReadingRepository,
     ReadingService,
     SensorRepository,
@@ -27,7 +27,7 @@ class FakeReadingRepository:
             sensor_id=sensor_id,
             value=value,
             unit=unit,
-            timestamp=timestamp or datetime.now(),
+            timestamp=timestamp or datetime.now(UTC),
         )
         self._readings.append(reading)
         return reading
@@ -82,35 +82,6 @@ class FakeReadingRepository:
             (reading for reading in self._readings if reading.id == reading_id),
             None,
         )
-
-    def update(
-        self,
-        reading_id: int,
-        value: float | None,
-        unit: str | None,
-    ) -> ReadingModel | None:
-        reading = self.get_by_id(reading_id)
-
-        if reading is None:
-            return None
-
-        if value is not None:
-            reading.value = value
-
-        if unit is not None:
-            reading.unit = unit
-
-        return reading
-
-    def delete(self, reading_id: int) -> bool:
-        reading = self.get_by_id(reading_id)
-
-        if reading is None:
-            return False
-
-        self._readings.remove(reading)
-        return True
-
 
 class FakeSensorRepository:
     def __init__(self) -> None:
@@ -262,71 +233,6 @@ def test_get_returns_none_when_reading_does_not_exist() -> None:
     assert reading is None
 
 
-def test_update_changes_only_provided_fields() -> None:
-    repo: ReadingRepository = FakeReadingRepository()
-    service = make_service(repo)
-    created = service.record("TEMP-01", 25.5, "C")
-
-    updated = service.update(
-        reading_id=created.id,
-        value=30.0,
-        unit=None,
-    )
-
-    assert updated is not None
-    assert updated.value == 30.0
-    assert updated.unit == "C"
-
-
-def test_update_returns_none_when_reading_does_not_exist() -> None:
-    repo: ReadingRepository = FakeReadingRepository()
-    service = make_service(repo)
-
-    updated = service.update(
-        reading_id=999,
-        value=30.0,
-        unit=None,
-    )
-
-    assert updated is None
-
-
-def test_update_rejects_temperature_below_absolute_zero() -> None:
-    repo: ReadingRepository = FakeReadingRepository()
-    service = make_service(repo)
-    created = service.record("TEMP-01", 25.5, "C")
-
-    with pytest.raises(
-        ValueError,
-        match="Temperatura por debajo del cero absoluto",
-    ):
-        service.update(
-            reading_id=created.id,
-            value=-274.0,
-            unit=None,
-        )
-
-
-def test_delete_removes_existing_reading() -> None:
-    repo: ReadingRepository = FakeReadingRepository()
-    service = make_service(repo)
-    created = service.record("TEMP-01", 25.5, "C")
-
-    deleted = service.delete(created.id)
-
-    assert deleted is True
-    assert service.get(created.id) is None
-
-
-def test_delete_returns_false_when_reading_does_not_exist() -> None:
-    repo: ReadingRepository = FakeReadingRepository()
-    service = make_service(repo)
-
-    deleted = service.delete(999)
-
-    assert deleted is False
-
-
 def test_list_returns_paginated_readings() -> None:
     repo: ReadingRepository = FakeReadingRepository()
     service = make_service(repo)
@@ -344,7 +250,7 @@ def test_list_returns_paginated_readings() -> None:
     assert readings == [second, third]
 
 
-def test_list_rejects_inverted_date_range() -> None:
+def test_list_rejects_inverted_utc_date_range() -> None:
     service = make_service(FakeReadingRepository())
 
     with pytest.raises(ValueError, match="'from'.*posterior"):
@@ -352,19 +258,19 @@ def test_list_rejects_inverted_date_range() -> None:
             sensor_id="TEMP-01",
             offset=0,
             limit=50,
-            from_date=datetime(2026, 2, 1),
-            to_date=datetime(2026, 1, 1),
+            from_date=datetime(2026, 2, 1, tzinfo=UTC),
+            to_date=datetime(2026, 1, 1, tzinfo=UTC),
         )
 
 
-def test_list_rejects_mixed_naive_and_aware_dates() -> None:
+def test_list_rejects_naive_date_filter() -> None:
     service = make_service(FakeReadingRepository())
 
-    with pytest.raises(InvalidDateRangeError, match="misma zona horaria"):
+    with pytest.raises(InvalidTimestampError, match="zona horaria"):
         service.list(
             sensor_id="TEMP-01",
             offset=0,
             limit=50,
-            from_date=datetime(2026, 1, 1, tzinfo=UTC),
-            to_date=datetime(2026, 1, 2),
+            from_date=datetime(2026, 1, 1),
+            to_date=None,
         )

@@ -43,6 +43,7 @@ class SqlAlchemySensorRepository:
         self._db.refresh(sensor)
         return sensor
 
+
 class SqlAlchemyReadingRepository:
     """Implementa la persistencia de lecturas mediante SQLAlchemy."""
 
@@ -54,13 +55,13 @@ class SqlAlchemyReadingRepository:
         sensor_id: str,
         value: float,
         unit: str,
-        timestamp: datetime | None = None,
+        timestamp: datetime,
     ) -> ReadingModel:
         reading = ReadingModel(
             sensor_id=sensor_id,
             value=value,
             unit=unit,
-            **({"timestamp": timestamp} if timestamp is not None else {}),
+            timestamp=timestamp,
         )
 
         try:
@@ -123,43 +124,6 @@ class SqlAlchemyReadingRepository:
         reading_id: int,
     ) -> ReadingModel | None:
         return self._db.get(ReadingModel, reading_id)
-
-    def update(
-        self,
-        reading_id: int,
-        value: float | None,
-        unit: str | None,
-    ) -> ReadingModel | None:
-        reading = self.get_by_id(reading_id)
-
-        if reading is None:
-            return None
-
-        if value is not None:
-            reading.value = value
-
-        if unit is not None:
-            reading.unit = unit
-
-        self._db.commit()
-        self._db.refresh(reading)
-
-        return reading
-
-    def delete(
-        self,
-        reading_id: int,
-    ) -> bool:
-        reading = self.get_by_id(reading_id)
-
-        if reading is None:
-            return False
-
-        self._db.delete(reading)
-        self._db.commit()
-
-        return True
-
 
 class SqlAlchemyAlertRepository:
     """Implementa la persistencia de alertas mediante SQLAlchemy."""

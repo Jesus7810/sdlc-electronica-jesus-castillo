@@ -76,7 +76,7 @@ class ReadingModel(Base):
     value: Mapped[float] = mapped_column(Float)
     unit: Mapped[str] = mapped_column(String(20))
     timestamp: Mapped[datetime] = mapped_column(
-        DateTime,
+        DateTime(timezone=True),
         server_default=func.now(),
     )
     sensor: Mapped[SensorModel] = relationship(back_populates="readings")

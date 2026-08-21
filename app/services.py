@@ -168,7 +168,7 @@ class ReadingRepository(Protocol):
         sensor_id: str,
         value: float,
         unit: str,
-        timestamp: datetime | None = None,
+        timestamp: datetime,
     ) -> ReadingModel: ...
 
     def exists_at(self, sensor_id: str, timestamp: datetime) -> bool: ...
@@ -190,16 +190,6 @@ class ReadingRepository(Protocol):
         self,
         reading_id: int,
     ) -> ReadingModel | None: ...
-
-    def update(
-        self,
-        reading_id: int,
-        value: float | None,
-        unit: str | None,
-    ) -> ReadingModel | None: ...
-
-    def delete(self, reading_id: int) -> bool: ...
-
 
 class AlertRepository(Protocol):
     def add(
@@ -286,6 +276,12 @@ class ReadingService:
             )
         return sensor
 
+    @staticmethod
+    def _normalize_utc_timestamp(timestamp: datetime) -> datetime:
+        if timestamp.tzinfo is None or timestamp.utcoffset() is None:
+            raise InvalidTimestampError("El timestamp debe incluir zona horaria")
+        return timestamp.astimezone(UTC)
+
     def record(
         self,
         sensor_id: str,
@@ -295,7 +291,9 @@ class ReadingService:
     ) -> ReadingModel:
         sensor = self._validate_for_sensor(sensor_id, value, unit)
 
-        effective_timestamp = timestamp or datetime.now(UTC).replace(tzinfo=None)
+        effective_timestamp = self._normalize_utc_timestamp(
+            timestamp or datetime.now(UTC)
+        )
         if self._repo.exists_at(sensor_id, effective_timestamp):
             raise ReadingConflictError(
                 "Ya existe una lectura para este sensor en esa fecha"
@@ -330,14 +328,16 @@ class ReadingService:
         from_date: datetime | None = None,
         to_date: datetime | None = None,
     ) -> list[ReadingModel]:
-        if from_date is not None and to_date is not None:
-            from_is_naive = from_date.tzinfo is None
-            to_is_naive = to_date.tzinfo is None
-            if from_is_naive != to_is_naive:
-                raise InvalidDateRangeError(
-                    "Los parámetros 'from' y 'to' deben usar la misma zona horaria"
-                )
-            if from_date > to_date:
+        normalized_from = (
+            self._normalize_utc_timestamp(from_date)
+            if from_date is not None
+            else None
+        )
+        normalized_to = (
+            self._normalize_utc_timestamp(to_date) if to_date is not None else None
+        )
+        if normalized_from is not None and normalized_to is not None:
+            if normalized_from > normalized_to:
                 raise InvalidDateRangeError(
                     "El parámetro 'from' no puede ser posterior a 'to'"
                 )
@@ -345,34 +345,17 @@ class ReadingService:
             sensor_id,
             offset,
             limit,
-            from_date,
-            to_date,
+            normalized_from,
+            normalized_to,
         )
-
-    def update(
-        self,
-        reading_id: int,
-        value: float | None,
-        unit: str | None,
-    ) -> ReadingModel | None:
-        reading = self._repo.get_by_id(reading_id)
-        if reading is None:
-            return None
-        effective_value = value if value is not None else reading.value
-        effective_unit = unit if unit is not None else reading.unit
-        self._validate_for_sensor(
-            reading.sensor_id,
-            effective_value,
-            effective_unit,
-        )
-        return self._repo.update(reading_id, value, unit)
-
-    def delete(self, reading_id: int) -> bool:
-        return self._repo.delete(reading_id)
 
 
 class InvalidDateRangeError(ValueError):
     """Indica un intervalo de consulta cronológicamente inválido."""
+
+
+class InvalidTimestampError(ValueError):
+    """Indica que un timestamp no incluye zona horaria."""
 
 
 class ReadingConflictError(Exception):

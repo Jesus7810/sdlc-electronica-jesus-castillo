@@ -23,7 +23,6 @@ from app.schemas import (
     SensorReadingCreate,
     SensorReadingIn,
     SensorReadingOut,
-    SensorReadingUpdate,
     SensorUpdate,
 )
 from app.services import (
@@ -32,6 +31,7 @@ from app.services import (
     AlertStrategy,
     DatabaseAlertStrategy,
     InvalidDateRangeError,
+    InvalidTimestampError,
     ReadingConflictError,
     ReadingRepository,
     ReadingService,
@@ -266,6 +266,8 @@ def list_sensor_readings(
         raise HTTPException(status_code=404, detail=str(error)) from error
     try:
         readings = service.list(sensor_id, offset, limit, from_date, to_date)
+    except InvalidTimestampError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
     except InvalidDateRangeError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     return [reading_out(reading) for reading in readings]
@@ -290,27 +292,3 @@ def get_reading(
     if reading is None:
         raise HTTPException(status_code=404, detail="Lectura no encontrada")
     return reading_out(reading)
-
-
-@router.patch("/readings/{reading_id}", response_model=SensorReadingOut)
-def update_reading(
-    reading_id: int,
-    changes: SensorReadingUpdate,
-    service: Annotated[ReadingService, Depends(get_reading_service)],
-) -> SensorReadingOut:
-    try:
-        updated = service.update(reading_id, changes.value, changes.unit)
-    except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
-    if updated is None:
-        raise HTTPException(status_code=404, detail="Lectura no encontrada")
-    return reading_out(updated)
-
-
-@router.delete("/readings/{reading_id}", status_code=204)
-def delete_reading(
-    reading_id: int,
-    service: Annotated[ReadingService, Depends(get_reading_service)],
-) -> None:
-    if not service.delete(reading_id):
-        raise HTTPException(status_code=404, detail="Lectura no encontrada")

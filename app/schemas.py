@@ -85,6 +85,15 @@ class SensorReadingCreate(BaseModel):
     unit: str = Field(min_length=1, max_length=20)
     timestamp: datetime | None = None
 
+    @field_validator("timestamp")
+    @classmethod
+    def normalize_timestamp(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("El timestamp debe incluir zona horaria")
+        return value.astimezone(UTC)
+
 
 class SensorReadingIn(BaseModel):
     sensor_id: str = Field(..., examples=["TEMP-01"])
@@ -98,10 +107,14 @@ class SensorReadingOut(SensorReadingIn):
     id: int
     timestamp: datetime
 
-
-class SensorReadingUpdate(BaseModel):
-    value: float | None = None
-    unit: str | None = Field(default=None, min_length=1, max_length=20)
+    @field_validator("timestamp", mode="before")
+    @classmethod
+    def normalize_output_timestamp(cls, value: object) -> object:
+        if not isinstance(value, datetime):
+            return value
+        if value.tzinfo is None or value.utcoffset() is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
 
 
 class AlertOut(BaseModel):
