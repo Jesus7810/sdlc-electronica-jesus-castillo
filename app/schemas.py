@@ -122,7 +122,31 @@ class AlertOut(BaseModel):
 
     id: int
     sensor_id: str
-    reading_id: int
-    reading_value: float
-    threshold: float
-    created_at: datetime
+    condition: str
+    severity: str
+    status: str
+    origin_reading_id: int
+    origin_reading_value: float
+    origin_threshold: float
+    origin_severity: str
+    last_reading_id: int
+    last_reading_value: float
+    last_threshold: float
+    last_severity: str
+    opened_at: datetime
+    last_triggered_at: datetime
+    updated_at: datetime
+
+    @field_validator(
+        "opened_at",
+        "last_triggered_at",
+        "updated_at",
+        mode="before",
+    )
+    @classmethod
+    def normalize_alert_timestamp(cls, value: object) -> object:
+        if not isinstance(value, datetime):
+            return value
+        if value.tzinfo is None or value.utcoffset() is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)

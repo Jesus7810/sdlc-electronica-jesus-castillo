@@ -1,9 +1,10 @@
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.domain import AlertSeverity, Anomaly
 from app.models import AlertModel, ReadingModel, SensorModel
 
 
@@ -131,21 +132,59 @@ class SqlAlchemyAlertRepository:
     def __init__(self, db: Session) -> None:
         self._db = db
 
-    def add(
+    @staticmethod
+    def _as_utc(timestamp: datetime) -> datetime:
+        if timestamp.tzinfo is None or timestamp.utcoffset() is None:
+            return timestamp.replace(tzinfo=UTC)
+        return timestamp.astimezone(UTC)
+
+    def open_or_update(
         self,
-        sensor_id: str,
-        reading_id: int,
-        reading_value: float,
-        threshold: float,
+        reading: ReadingModel,
+        anomaly: Anomaly,
     ) -> AlertModel:
-        alert = AlertModel(
-            sensor_id=sensor_id,
-            reading_id=reading_id,
-            reading_value=reading_value,
-            threshold=threshold,
+        statement = select(AlertModel).where(
+            AlertModel.sensor_id == reading.sensor_id,
+            AlertModel.condition == anomaly.condition.value,
+            AlertModel.status == "open",
         )
-        try:
+        alert = self._db.scalar(statement)
+        triggered_at = self._as_utc(reading.timestamp)
+
+        if alert is not None:
+            updated_at = datetime.now(UTC)
+            previous_updated_at = self._as_utc(alert.updated_at)
+            if updated_at <= previous_updated_at:
+                updated_at = previous_updated_at + timedelta(microseconds=1)
+            alert.last_reading_id = reading.id
+            alert.last_reading_value = reading.value
+            alert.last_threshold = anomaly.threshold
+            alert.last_severity = anomaly.severity.value
+            alert.last_triggered_at = triggered_at
+            alert.updated_at = updated_at
+            if anomaly.severity == AlertSeverity.CRITICAL:
+                alert.severity = AlertSeverity.CRITICAL.value
+        else:
+            now = datetime.now(UTC)
+            alert = AlertModel(
+                sensor_id=reading.sensor_id,
+                condition=anomaly.condition.value,
+                severity=anomaly.severity.value,
+                status="open",
+                origin_reading_id=reading.id,
+                origin_reading_value=reading.value,
+                origin_threshold=anomaly.threshold,
+                origin_severity=anomaly.severity.value,
+                last_reading_id=reading.id,
+                last_reading_value=reading.value,
+                last_threshold=anomaly.threshold,
+                last_severity=anomaly.severity.value,
+                opened_at=now,
+                last_triggered_at=triggered_at,
+                updated_at=now,
+            )
             self._db.add(alert)
+        try:
             self._db.commit()
         except IntegrityError:
             self._db.rollback()

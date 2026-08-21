@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     Boolean,
@@ -6,9 +6,11 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     String,
     UniqueConstraint,
     func,
+    text,
     true,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -84,19 +86,64 @@ class ReadingModel(Base):
 
 class AlertModel(Base):
     __tablename__ = "alerts"
+    __table_args__ = (
+        CheckConstraint(
+            "condition IN ('low', 'high')",
+            name="ck_alerts_condition",
+        ),
+        CheckConstraint(
+            "severity IN ('WARNING', 'CRITICAL')",
+            name="ck_alerts_severity",
+        ),
+        CheckConstraint(
+            "origin_severity IN ('WARNING', 'CRITICAL')",
+            name="ck_alerts_origin_severity",
+        ),
+        CheckConstraint(
+            "last_severity IN ('WARNING', 'CRITICAL')",
+            name="ck_alerts_last_severity",
+        ),
+        CheckConstraint("status = 'open'", name="ck_alerts_status_open"),
+        Index(
+            "uq_alerts_open_sensor_condition",
+            "sensor_id",
+            "condition",
+            unique=True,
+            postgresql_where=text("status = 'open'"),
+            sqlite_where=text("status = 'open'"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     sensor_id: Mapped[str] = mapped_column(
         ForeignKey("sensors.id", ondelete="CASCADE"),
         index=True,
     )
-    reading_id: Mapped[int] = mapped_column(
+    condition: Mapped[str] = mapped_column(String(10))
+    severity: Mapped[str] = mapped_column(String(10))
+    status: Mapped[str] = mapped_column(
+        String(20),
+        default="open",
+        server_default=text("'open'"),
+    )
+    origin_reading_id: Mapped[int] = mapped_column(
         ForeignKey("readings.id", ondelete="CASCADE"),
         index=True,
     )
-    reading_value: Mapped[float] = mapped_column(Float)
-    threshold: Mapped[float] = mapped_column(Float)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime,
+    origin_reading_value: Mapped[float] = mapped_column(Float)
+    origin_threshold: Mapped[float] = mapped_column(Float)
+    origin_severity: Mapped[str] = mapped_column(String(10))
+    last_reading_id: Mapped[int] = mapped_column(
+        ForeignKey("readings.id", ondelete="CASCADE"),
+        index=True,
+    )
+    last_reading_value: Mapped[float] = mapped_column(Float)
+    last_threshold: Mapped[float] = mapped_column(Float)
+    last_severity: Mapped[str] = mapped_column(String(10))
+    opened_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
         server_default=func.now(),
     )
+    last_triggered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

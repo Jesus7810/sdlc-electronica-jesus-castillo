@@ -5,9 +5,11 @@ from sqlalchemy.exc import IntegrityError
 
 from app.domain import (
     VALID_UNITS,
+    Anomaly,
     DomainValidationError,
     ResourceConflictError,
     ResourceNotFoundError,
+    classify_anomaly,
     validate_sensor_configuration,
 )
 from app.models import AlertModel, ReadingModel, SensorModel
@@ -192,12 +194,8 @@ class ReadingRepository(Protocol):
     ) -> ReadingModel | None: ...
 
 class AlertRepository(Protocol):
-    def add(
-        self,
-        sensor_id: str,
-        reading_id: int,
-        reading_value: float,
-        threshold: float,
+    def open_or_update(
+        self, reading: ReadingModel, anomaly: Anomaly
     ) -> AlertModel: ...
 
     def list(self) -> list[AlertModel]: ...
@@ -207,7 +205,7 @@ class AlertStrategy(Protocol):
     def handle_anomaly(
         self,
         reading: ReadingModel,
-        threshold: float,
+        anomaly: Anomaly,
     ) -> None: ...
 
 
@@ -218,14 +216,9 @@ class DatabaseAlertStrategy:
     def handle_anomaly(
         self,
         reading: ReadingModel,
-        threshold: float,
+        anomaly: Anomaly,
     ) -> None:
-        self._repo.add(
-            reading.sensor_id,
-            reading.id,
-            reading.value,
-            threshold,
-        )
+        self._repo.open_or_update(reading, anomaly)
 
 
 class AlertService:
@@ -309,11 +302,15 @@ class ReadingService:
             raise ReadingConflictError(
                 "Ya existe una lectura para este sensor en esa fecha"
             ) from error
-        if created.value > sensor.high_warning_threshold:
-            self._alert_strategy.handle_anomaly(
-                created,
-                sensor.high_warning_threshold,
-            )
+        anomaly = classify_anomaly(
+            created.value,
+            sensor.low_critical_threshold,
+            sensor.low_warning_threshold,
+            sensor.high_warning_threshold,
+            sensor.high_critical_threshold,
+        )
+        if anomaly is not None:
+            self._alert_strategy.handle_anomaly(created, anomaly)
 
         return created
 

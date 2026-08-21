@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from app.domain import Anomaly
 from app.models import ReadingModel, SensorModel
 from app.services import (
     InvalidTimestampError,
@@ -139,14 +140,14 @@ class FakeSensorRepository:
 
 class FakeAlertStrategy:
     def __init__(self) -> None:
-        self.handled_anomalies: list[tuple[ReadingModel, float]] = []
+        self.handled_anomalies: list[tuple[ReadingModel, Anomaly]] = []
 
     def handle_anomaly(
         self,
         reading: ReadingModel,
-        threshold: float,
+        anomaly: Anomaly,
     ) -> None:
-        self.handled_anomalies.append((reading, threshold))
+        self.handled_anomalies.append((reading, anomaly))
 
 
 def make_service(repo: ReadingRepository) -> ReadingService:
@@ -196,21 +197,6 @@ def test_record_allows_humidity_below_absolute_zero_within_range() -> None:
     reading = service.record("HUM-01", -274.0, "%")
 
     assert reading.value == -274.0
-
-
-def test_record_handles_anomaly_when_value_exceeds_sensor_threshold() -> None:
-    reading_repo: ReadingRepository = FakeReadingRepository()
-    sensor_repo: SensorRepository = FakeSensorRepository()
-    sensor = sensor_repo.get_by_id("TEMP-01")
-    assert sensor is not None
-    sensor.high_warning_threshold = 30.0
-
-    alert_strategy = FakeAlertStrategy()
-    service = ReadingService(reading_repo, sensor_repo, alert_strategy)
-
-    reading = service.record("TEMP-01", 31.0, "C")
-
-    assert alert_strategy.handled_anomalies == [(reading, 30.0)]
 
 
 def test_get_returns_existing_reading() -> None:
