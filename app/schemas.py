@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -47,8 +47,20 @@ class SensorCreate(SensorBase):
 class SensorOut(SensorCreate):
     model_config = ConfigDict(from_attributes=True)
 
+    is_active: bool
+    deactivated_at: datetime | None
+
+    @field_validator("deactivated_at", mode="before")
+    @classmethod
+    def normalize_deactivated_at(cls, value: object) -> object:
+        if not isinstance(value, datetime) or value.tzinfo is not None:
+            return value
+        return value.replace(tzinfo=UTC)
+
 
 class SensorUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str | None = Field(default=None, min_length=1, max_length=100)
     location: str | None = Field(default=None, min_length=1, max_length=255)
     type: SensorType | None = None

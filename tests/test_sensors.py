@@ -29,6 +29,14 @@ def sensor_payload(sensor_id: str = "TEMP-01") -> dict[str, object]:
     }
 
 
+def sensor_response_payload(sensor_id: str = "TEMP-01") -> dict[str, object]:
+    return {
+        **sensor_payload(sensor_id),
+        "is_active": True,
+        "deactivated_at": None,
+    }
+
+
 def test_swagger_is_available() -> None:
     response = client.get("/docs")
 
@@ -40,9 +48,9 @@ def test_create_list_and_get_sensor() -> None:
     created = client.post("/sensors", json=sensor_payload())
 
     assert created.status_code == 201
-    assert created.json() == sensor_payload()
-    assert client.get("/sensors").json() == [sensor_payload()]
-    assert client.get("/sensors/TEMP-01").json() == sensor_payload()
+    assert created.json() == sensor_response_payload()
+    assert client.get("/sensors").json() == [sensor_response_payload()]
+    assert client.get("/sensors/TEMP-01").json() == sensor_response_payload()
 
 
 def test_duplicate_sensor_id_returns_409() -> None:
@@ -71,20 +79,6 @@ def test_patch_sensor_updates_only_sent_fields() -> None:
     assert response.json()["name"] == "Cámara fría"
     assert response.json()["min_value"] == -80.0
     assert response.json()["max_value"] == 125.0
-
-
-def test_delete_sensor() -> None:
-    client.post("/sensors", json=sensor_payload())
-
-    response = client.delete("/sensors/TEMP-01")
-
-    assert response.status_code == 204
-    assert response.content == b""
-    assert client.get("/sensors/TEMP-01").status_code == 404
-
-
-def test_delete_unknown_sensor_returns_404() -> None:
-    assert client.delete("/sensors/UNKNOWN").status_code == 404
 
 
 def test_rejects_invalid_sensor_range() -> None:
@@ -389,17 +383,6 @@ def test_patch_range_accepts_all_historical_readings() -> None:
     )
 
     assert response.status_code == 200
-
-
-def test_delete_sensor_cascades_to_readings() -> None:
-    client.post("/sensors", json=sensor_payload())
-    created = client.post(
-        "/sensors/TEMP-01/readings",
-        json={"value": 20.0, "unit": "C"},
-    )
-
-    assert client.delete("/sensors/TEMP-01").status_code == 204
-    assert client.get(f"/readings/{created.json()['id']}").status_code == 404
 
 
 def test_legacy_create_requires_existing_sensor() -> None:

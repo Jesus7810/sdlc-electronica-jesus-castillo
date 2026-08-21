@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     Float,
@@ -8,6 +9,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     func,
+    true,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -38,6 +40,17 @@ class SensorModel(Base):
     high_warning_threshold: Mapped[float] = mapped_column(Float)
     high_critical_threshold: Mapped[float] = mapped_column(Float)
     max_value: Mapped[float] = mapped_column(Float)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        default=True,
+        server_default=true(),
+        nullable=False,
+        index=True,
+    )
+    deactivated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
     readings: Mapped[list["ReadingModel"]] = relationship(
         back_populates="sensor",
         cascade="all, delete-orphan",

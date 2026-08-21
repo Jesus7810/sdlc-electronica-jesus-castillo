@@ -139,8 +139,9 @@ def create_sensor(
 @router.get("/sensors", response_model=list[SensorOut])
 def list_sensors(
     service: Annotated[SensorService, Depends(get_sensor_service)],
+    include_inactive: bool = False,
 ) -> list[SensorOut]:
-    return [sensor_out(sensor) for sensor in service.list()]
+    return [sensor_out(sensor) for sensor in service.list(include_inactive)]
 
 
 @router.get("/sensors/{sensor_id}", response_model=SensorOut)
@@ -175,13 +176,24 @@ def update_sensor(
         raise HTTPException(status_code=409, detail=str(error)) from error
 
 
-@router.delete("/sensors/{sensor_id}", status_code=204)
-def delete_sensor(
+@router.post("/sensors/{sensor_id}/deactivate", response_model=SensorOut)
+def deactivate_sensor(
     sensor_id: str,
     service: Annotated[SensorService, Depends(get_sensor_service)],
-) -> None:
+) -> SensorOut:
     try:
-        service.delete(sensor_id)
+        return sensor_out(service.deactivate(sensor_id))
+    except ResourceNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@router.post("/sensors/{sensor_id}/activate", response_model=SensorOut)
+def activate_sensor(
+    sensor_id: str,
+    service: Annotated[SensorService, Depends(get_sensor_service)],
+) -> SensorOut:
+    try:
+        return sensor_out(service.activate(sensor_id))
     except ResourceNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
@@ -200,6 +212,8 @@ def record_reading(
         )
     except ResourceNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+    except ResourceConflictError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     except DomainValidationError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     except ValueError as error:

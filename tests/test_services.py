@@ -127,6 +127,8 @@ class FakeSensorRepository:
                 high_warning_threshold=30.0,
                 high_critical_threshold=50.0,
                 max_value=200.0,
+                is_active=True,
+                deactivated_at=None,
             ),
             "HUM-01": SensorModel(
                 id="HUM-01",
@@ -140,6 +142,8 @@ class FakeSensorRepository:
                 high_warning_threshold=80.0,
                 high_critical_threshold=90.0,
                 max_value=100.0,
+                is_active=True,
+                deactivated_at=None,
             ),
         }
 
@@ -147,8 +151,12 @@ class FakeSensorRepository:
         self._sensors[sensor.id] = sensor
         return sensor
 
-    def list(self) -> list[SensorModel]:
-        return list(self._sensors.values())
+    def list(self, include_inactive: bool = False) -> list[SensorModel]:
+        return [
+            sensor
+            for sensor in self._sensors.values()
+            if include_inactive or sensor.is_active
+        ]
 
     def get_by_id(self, sensor_id: str) -> SensorModel | None:
         return self._sensors.get(sensor_id)
@@ -157,10 +165,6 @@ class FakeSensorRepository:
         for field, value in changes.items():
             setattr(sensor, field, value)
         return sensor
-
-    def delete(self, sensor: SensorModel) -> None:
-        del self._sensors[sensor.id]
-
 
 class FakeAlertStrategy:
     def __init__(self) -> None:

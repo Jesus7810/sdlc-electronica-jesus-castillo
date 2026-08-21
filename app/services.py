@@ -15,12 +15,11 @@ from app.models import AlertModel, ReadingModel, SensorModel
 
 class SensorRepository(Protocol):
     def add(self, sensor: SensorModel) -> SensorModel: ...
-    def list(self) -> list[SensorModel]: ...
+    def list(self, include_inactive: bool = False) -> list[SensorModel]: ...
     def get_by_id(self, sensor_id: str) -> SensorModel | None: ...
     def update(
         self, sensor: SensorModel, changes: dict[str, object]
     ) -> SensorModel: ...
-    def delete(self, sensor: SensorModel) -> None: ...
 
 
 class SensorService:
@@ -70,6 +69,8 @@ class SensorService:
             high_warning_threshold=high_warning_threshold,
             high_critical_threshold=high_critical_threshold,
             max_value=max_value,
+            is_active=True,
+            deactivated_at=None,
         )
         try:
             return self._repo.add(sensor)
@@ -78,8 +79,8 @@ class SensorService:
                 "El identificador del sensor ya existe"
             ) from error
 
-    def list(self) -> list[SensorModel]:
-        return self._repo.list()
+    def list(self, include_inactive: bool = False) -> list[SensorModel]:
+        return self._repo.list(include_inactive)
 
     def get(self, sensor_id: str) -> SensorModel:
         sensor = self._repo.get_by_id(sensor_id)
@@ -136,8 +137,29 @@ class SensorService:
             raise ResourceConflictError("El nuevo rango excluye lecturas existentes")
         return self._repo.update(sensor, changes)
 
-    def delete(self, sensor_id: str) -> None:
-        self._repo.delete(self.get(sensor_id))
+    def deactivate(self, sensor_id: str) -> SensorModel:
+        sensor = self.get(sensor_id)
+        if not sensor.is_active:
+            return sensor
+        return self._repo.update(
+            sensor,
+            {
+                "is_active": False,
+                "deactivated_at": datetime.now(UTC),
+            },
+        )
+
+    def activate(self, sensor_id: str) -> SensorModel:
+        sensor = self.get(sensor_id)
+        if sensor.is_active:
+            return sensor
+        return self._repo.update(
+            sensor,
+            {
+                "is_active": True,
+                "deactivated_at": None,
+            },
+        )
 
 
 class ReadingRepository(Protocol):
@@ -250,6 +272,8 @@ class ReadingService:
         unit: str,
     ) -> SensorModel:
         sensor = self.require_sensor(sensor_id)
+        if not sensor.is_active:
+            raise ResourceConflictError("El sensor est\u00e1 inactivo")
         if sensor.type == "temperature" and value < -273.15:
             raise ValueError("Temperatura por debajo del cero absoluto")
         if unit != sensor.unit or VALID_UNITS[sensor.type] != unit:

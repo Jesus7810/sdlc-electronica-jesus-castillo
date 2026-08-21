@@ -23,8 +23,10 @@ class SqlAlchemySensorRepository:
         self._db.refresh(sensor)
         return sensor
 
-    def list(self) -> list[SensorModel]:
+    def list(self, include_inactive: bool = False) -> list[SensorModel]:
         statement = select(SensorModel).order_by(SensorModel.id)
+        if not include_inactive:
+            statement = statement.where(SensorModel.is_active.is_(True))
         return list(self._db.scalars(statement).all())
 
     def get_by_id(self, sensor_id: str) -> SensorModel | None:
@@ -40,11 +42,6 @@ class SqlAlchemySensorRepository:
         self._db.commit()
         self._db.refresh(sensor)
         return sensor
-
-    def delete(self, sensor: SensorModel) -> None:
-        self._db.delete(sensor)
-        self._db.commit()
-
 
 class SqlAlchemyReadingRepository:
     """Implementa la persistencia de lecturas mediante SQLAlchemy."""
