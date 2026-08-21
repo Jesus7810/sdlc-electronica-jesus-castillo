@@ -36,29 +36,40 @@ class SensorService:
         self,
         sensor_id: str,
         name: str,
+        location: str,
         sensor_type: str,
         unit: str,
         min_value: float,
+        low_critical_threshold: float,
+        low_warning_threshold: float,
+        high_warning_threshold: float,
+        high_critical_threshold: float,
         max_value: float,
-        threshold: float,
     ) -> SensorModel:
         validate_sensor_configuration(
             sensor_type,
             unit,
             min_value,
+            low_critical_threshold,
+            low_warning_threshold,
+            high_warning_threshold,
+            high_critical_threshold,
             max_value,
-            threshold,
         )
         if self._repo.get_by_id(sensor_id) is not None:
             raise ResourceConflictError("El identificador del sensor ya existe")
         sensor = SensorModel(
             id=sensor_id,
             name=name,
+            location=location,
             type=sensor_type,
             unit=unit,
             min_value=min_value,
+            low_critical_threshold=low_critical_threshold,
+            low_warning_threshold=low_warning_threshold,
+            high_warning_threshold=high_warning_threshold,
+            high_critical_threshold=high_critical_threshold,
             max_value=max_value,
-            threshold=threshold,
         )
         try:
             return self._repo.add(sensor)
@@ -85,10 +96,32 @@ class SensorService:
         sensor_type = cast(str, changes.get("type", sensor.type))
         unit = cast(str, changes.get("unit", sensor.unit))
         min_value = cast(float, changes.get("min_value", sensor.min_value))
+        low_critical_threshold = cast(
+            float,
+            changes.get("low_critical_threshold", sensor.low_critical_threshold),
+        )
+        low_warning_threshold = cast(
+            float,
+            changes.get("low_warning_threshold", sensor.low_warning_threshold),
+        )
+        high_warning_threshold = cast(
+            float,
+            changes.get("high_warning_threshold", sensor.high_warning_threshold),
+        )
+        high_critical_threshold = cast(
+            float,
+            changes.get("high_critical_threshold", sensor.high_critical_threshold),
+        )
         max_value = cast(float, changes.get("max_value", sensor.max_value))
-        threshold = cast(float, changes.get("threshold", sensor.threshold))
         validate_sensor_configuration(
-            sensor_type, unit, min_value, max_value, threshold
+            sensor_type,
+            unit,
+            min_value,
+            low_critical_threshold,
+            low_warning_threshold,
+            high_warning_threshold,
+            high_critical_threshold,
+            max_value,
         )
         has_readings = self._reading_repo.has_for_sensor(sensor_id)
         type_changed = sensor_type != sensor.type
@@ -254,8 +287,11 @@ class ReadingService:
             raise ReadingConflictError(
                 "Ya existe una lectura para este sensor en esa fecha"
             ) from error
-        if created.value > sensor.threshold:
-            self._alert_strategy.handle_anomaly(created, sensor.threshold)
+        if created.value > sensor.high_warning_threshold:
+            self._alert_strategy.handle_anomaly(
+                created,
+                sensor.high_warning_threshold,
+            )
 
         return created
 

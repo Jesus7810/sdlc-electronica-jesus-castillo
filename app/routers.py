@@ -121,11 +121,15 @@ def create_sensor(
             service.create(
                 data.id,
                 data.name,
+                data.location,
                 data.type,
                 data.unit,
                 data.min_value,
+                data.low_critical_threshold,
+                data.low_warning_threshold,
+                data.high_warning_threshold,
+                data.high_critical_threshold,
                 data.max_value,
-                data.threshold,
             )
         )
     except ResourceConflictError as error:

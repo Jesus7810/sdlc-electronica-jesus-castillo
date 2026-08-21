@@ -1,18 +1,29 @@
 from datetime import datetime
 from typing import Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.domain import SensorType, validate_sensor_configuration
 
 
 class SensorBase(BaseModel):
     name: str = Field(min_length=1, max_length=100)
+    location: str = Field(min_length=1, max_length=255)
     type: SensorType
     unit: str = Field(min_length=1, max_length=20)
     min_value: float
+    low_critical_threshold: float
+    low_warning_threshold: float
+    high_warning_threshold: float
+    high_critical_threshold: float
     max_value: float
-    threshold: float
+
+    @field_validator("location", mode="before")
+    @classmethod
+    def normalize_location(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip()
+        return value
 
     @model_validator(mode="after")
     def validate_configuration(self) -> Self:
@@ -20,8 +31,11 @@ class SensorBase(BaseModel):
             self.type,
             self.unit,
             self.min_value,
+            self.low_critical_threshold,
+            self.low_warning_threshold,
+            self.high_warning_threshold,
+            self.high_critical_threshold,
             self.max_value,
-            self.threshold,
         )
         return self
 
@@ -36,11 +50,22 @@ class SensorOut(SensorCreate):
 
 class SensorUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
+    location: str | None = Field(default=None, min_length=1, max_length=255)
     type: SensorType | None = None
     unit: str | None = Field(default=None, min_length=1, max_length=20)
     min_value: float | None = None
+    low_critical_threshold: float | None = None
+    low_warning_threshold: float | None = None
+    high_warning_threshold: float | None = None
+    high_critical_threshold: float | None = None
     max_value: float | None = None
-    threshold: float | None = None
+
+    @field_validator("location", mode="before")
+    @classmethod
+    def normalize_location(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip()
+        return value
 
 
 class SensorReadingCreate(BaseModel):

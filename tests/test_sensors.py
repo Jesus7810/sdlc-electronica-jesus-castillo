@@ -17,11 +17,15 @@ def sensor_payload(sensor_id: str = "TEMP-01") -> dict[str, object]:
     return {
         "id": sensor_id,
         "name": "Temperatura del laboratorio",
+        "location": "Laboratorio A",
         "type": "temperature",
         "unit": "C",
         "min_value": -40.0,
+        "low_critical_threshold": 0.0,
+        "low_warning_threshold": 10.0,
+        "high_warning_threshold": 30.0,
+        "high_critical_threshold": 40.0,
         "max_value": 125.0,
-        "threshold": 30.0,
     }
 
 
@@ -105,11 +109,15 @@ def test_humidity_accepts_percent_unit() -> None:
     payload = {
         "id": "HUM-01",
         "name": "Humedad",
+        "location": "Laboratorio A",
         "type": "humidity",
         "unit": "%",
         "min_value": 0.0,
+        "low_critical_threshold": 10.0,
+        "low_warning_threshold": 20.0,
+        "high_warning_threshold": 80.0,
+        "high_critical_threshold": 90.0,
         "max_value": 100.0,
-        "threshold": 80.0,
     }
 
     assert client.post("/sensors", json=payload).status_code == 201
@@ -119,11 +127,15 @@ def test_humidity_reading_rejects_celsius_unit() -> None:
     payload = {
         "id": "HUM-01",
         "name": "Humedad",
+        "location": "Laboratorio A",
         "type": "humidity",
         "unit": "%",
         "min_value": 0.0,
+        "low_critical_threshold": 10.0,
+        "low_warning_threshold": 20.0,
+        "high_warning_threshold": 80.0,
+        "high_critical_threshold": 90.0,
         "max_value": 100.0,
-        "threshold": 80.0,
     }
     assert client.post("/sensors", json=payload).status_code == 201
 
@@ -292,6 +304,10 @@ def test_patch_type_and_unit_without_readings() -> None:
             "type": "humidity",
             "unit": "%",
             "min_value": 0.0,
+            "low_critical_threshold": 10.0,
+            "low_warning_threshold": 20.0,
+            "high_warning_threshold": 80.0,
+            "high_critical_threshold": 90.0,
             "max_value": 100.0,
         },
     )
@@ -338,7 +354,17 @@ def test_patch_range_rejects_excluded_historical_reading() -> None:
         json={"value": 20.0, "unit": "C"},
     )
 
-    response = client.patch("/sensors/TEMP-01", json={"min_value": 21.0})
+    response = client.patch(
+        "/sensors/TEMP-01",
+        json={
+            "min_value": 21.0,
+            "low_critical_threshold": 30.0,
+            "low_warning_threshold": 40.0,
+            "high_warning_threshold": 60.0,
+            "high_critical_threshold": 70.0,
+            "max_value": 100.0,
+        },
+    )
 
     assert response.status_code == 409
 
@@ -352,7 +378,14 @@ def test_patch_range_accepts_all_historical_readings() -> None:
 
     response = client.patch(
         "/sensors/TEMP-01",
-        json={"min_value": 0.0, "max_value": 100.0},
+        json={
+            "min_value": 0.0,
+            "low_critical_threshold": 10.0,
+            "low_warning_threshold": 15.0,
+            "high_warning_threshold": 30.0,
+            "high_critical_threshold": 40.0,
+            "max_value": 100.0,
+        },
     )
 
     assert response.status_code == 200
@@ -396,17 +429,17 @@ def test_openapi_contains_required_routes() -> None:
     } <= paths.keys()
 
 
-def test_create_sensor_persists_threshold() -> None:
+def test_create_sensor_persists_high_warning_threshold() -> None:
     payload = sensor_payload()
-    payload["threshold"] = 30.0
+    payload["high_warning_threshold"] = 35.0
 
     response = client.post("/sensors", json=payload)
 
     assert response.status_code == 201
-    assert response.json()["threshold"] == 30.0
+    assert response.json()["high_warning_threshold"] == 35.0
 
     persisted = client.get("/sensors/TEMP-01")
-    assert persisted.json()["threshold"] == 30.0
+    assert persisted.json()["high_warning_threshold"] == 35.0
 
 
 def test_reading_above_threshold_creates_queryable_alert() -> None:

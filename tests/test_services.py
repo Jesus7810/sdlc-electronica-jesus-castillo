@@ -118,20 +118,28 @@ class FakeSensorRepository:
             "TEMP-01": SensorModel(
                 id="TEMP-01",
                 name="Temperatura",
+                location="Laboratorio A",
                 type="temperature",
                 unit="C",
                 min_value=-273.15,
+                low_critical_threshold=-100.0,
+                low_warning_threshold=0.0,
+                high_warning_threshold=30.0,
+                high_critical_threshold=50.0,
                 max_value=200.0,
-                threshold=30.0,
             ),
             "HUM-01": SensorModel(
                 id="HUM-01",
                 name="Humedad",
+                location="Laboratorio B",
                 type="humidity",
                 unit="%",
                 min_value=0.0,
+                low_critical_threshold=10.0,
+                low_warning_threshold=20.0,
+                high_warning_threshold=80.0,
+                high_critical_threshold=90.0,
                 max_value=100.0,
-                threshold=80.0,
             ),
         }
 
@@ -220,7 +228,7 @@ def test_record_handles_anomaly_when_value_exceeds_sensor_threshold() -> None:
     sensor_repo: SensorRepository = FakeSensorRepository()
     sensor = sensor_repo.get_by_id("TEMP-01")
     assert sensor is not None
-    sensor.threshold = 30.0
+    sensor.high_warning_threshold = 30.0
 
     alert_strategy = FakeAlertStrategy()
     service = ReadingService(reading_repo, sensor_repo, alert_strategy)
