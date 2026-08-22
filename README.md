@@ -59,8 +59,10 @@ entre liveness, readiness y métricas se documenta en el
 
 ## Ejecución local con SQLite
 
-La aplicación usa `sqlite:///sensorhub.db` si `DATABASE_URL` no está definida.
-Para una instalación local nueva:
+`DATABASE_URL` es obligatoria para iniciar la aplicación o ejecutar Alembic. En
+Docker Compose también debe estar definida para los servicios `api` y `migrate`;
+el archivo `.env` local proporciona esa configuración a los contenedores. Para
+una instalación local nueva:
 
 ```bash
 python -m venv .venv
@@ -78,12 +80,18 @@ En Linux o macOS:
 source .venv/bin/activate
 ```
 
-Después instala dependencias, aplica el esquema e inicia la API:
+Define la variable de entorno antes de aplicar migraciones o iniciar la API:
+
+```powershell
+$env:DATABASE_URL = "sqlite:///sensorhub.db"
+python -m uvicorn app.main:app --reload
+```
+
+Después instala dependencias y aplica el esquema:
 
 ```bash
 python -m pip install --require-hashes -r requirements.txt
 python -m alembic upgrade head
-python -m uvicorn app.main:app --reload
 ```
 
 La API queda disponible en `http://127.0.0.1:8000`; la documentación interactiva
@@ -301,6 +309,14 @@ promedio en la base de datos. Sin lecturas en un rango válido devuelve `200` co
   `sensorhub_active_sensors`, `sensorhub_registered_readings` y
   `sensorhub_unresolved_alerts`. Esta última incluye alertas `open` y
   `acknowledged`.
+- Los errores de dominio se traducen globalmente sin alterar sus contratos 404,
+  409, 400 y 422; los errores inesperados devuelven una respuesta 500 genérica.
+  El `ValueError` propio de la validación de lecturas se mantiene local de forma
+  intencional.
+- Los eventos de aplicación se emiten una sola vez como JSON estructurado
+  seguro. Incluyen campos permitidos como `timestamp`, `level`, `logger`,
+  `event`, `status_code`, `path`, `method` y `error_type`; no incluyen mensajes
+  de excepciones, SQL, URLs, hosts ni credenciales.
 
 ## Calidad y CI
 

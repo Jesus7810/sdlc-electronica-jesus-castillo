@@ -7,7 +7,9 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///sensorhub.db")
+DATABASE_URL = os.getenv("DATABASE_URL")
+if DATABASE_URL is None:
+    raise RuntimeError("DATABASE_URL environment variable is required")
 
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace(
