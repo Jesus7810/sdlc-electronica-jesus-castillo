@@ -16,6 +16,12 @@ class AlertSeverity(StrEnum):
     CRITICAL = "CRITICAL"
 
 
+class AlertStatus(StrEnum):
+    OPEN = "open"
+    ACKNOWLEDGED = "acknowledged"
+    RESOLVED = "resolved"
+
+
 @dataclass(frozen=True)
 class Anomaly:
     condition: AlertCondition

@@ -84,6 +84,8 @@ def assert_alert_shape(alert: dict[str, object]) -> None:
         "opened_at",
         "last_triggered_at",
         "updated_at",
+        "acknowledged_at",
+        "resolved_at",
     }
     assert {"reading_id", "reading_value", "threshold", "created_at"}.isdisjoint(
         alert
@@ -102,6 +104,8 @@ def assert_alert_evidence(
     assert alert["condition"] == condition.value
     assert alert["severity"] == severity.value
     assert alert["status"] == "open"
+    assert alert["acknowledged_at"] is None
+    assert alert["resolved_at"] is None
     assert alert["origin_reading_id"] == reading["id"]
     assert alert["origin_reading_value"] == reading["value"]
     assert alert["origin_threshold"] == threshold

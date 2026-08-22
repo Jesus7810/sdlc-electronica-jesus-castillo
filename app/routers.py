@@ -6,6 +6,9 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.domain import (
+    AlertCondition,
+    AlertSeverity,
+    AlertStatus,
     DomainValidationError,
     ResourceConflictError,
     ResourceNotFoundError,
@@ -102,8 +105,61 @@ def alert_out(alert: AlertModel) -> AlertOut:
 @router.get("/alerts", response_model=list[AlertOut])
 def list_alerts(
     service: Annotated[AlertService, Depends(get_alert_service)],
+    sensor_id: str | None = None,
+    status: AlertStatus | None = None,
+    condition: AlertCondition | None = None,
+    severity: AlertSeverity | None = None,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> list[AlertOut]:
-    return [alert_out(alert) for alert in service.list()]
+    return [
+        alert_out(alert)
+        for alert in service.list(
+            sensor_id,
+            status,
+            condition,
+            severity,
+            offset,
+            limit,
+        )
+    ]
+
+
+@router.get("/alerts/{alert_id}", response_model=AlertOut)
+def get_alert(
+    alert_id: int,
+    service: Annotated[AlertService, Depends(get_alert_service)],
+) -> AlertOut:
+    try:
+        return alert_out(service.get(alert_id))
+    except ResourceNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@router.post("/alerts/{alert_id}/acknowledge", response_model=AlertOut)
+def acknowledge_alert(
+    alert_id: int,
+    service: Annotated[AlertService, Depends(get_alert_service)],
+) -> AlertOut:
+    try:
+        return alert_out(service.acknowledge(alert_id))
+    except ResourceNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ResourceConflictError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@router.post("/alerts/{alert_id}/resolve", response_model=AlertOut)
+def resolve_alert(
+    alert_id: int,
+    service: Annotated[AlertService, Depends(get_alert_service)],
+) -> AlertOut:
+    try:
+        return alert_out(service.resolve(alert_id))
+    except ResourceNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ResourceConflictError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 @router.get("/health")

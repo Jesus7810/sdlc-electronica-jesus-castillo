@@ -5,6 +5,9 @@ from sqlalchemy.exc import IntegrityError
 
 from app.domain import (
     VALID_UNITS,
+    AlertCondition,
+    AlertSeverity,
+    AlertStatus,
     Anomaly,
     DomainValidationError,
     ResourceConflictError,
@@ -198,7 +201,21 @@ class AlertRepository(Protocol):
         self, reading: ReadingModel, anomaly: Anomaly
     ) -> AlertModel: ...
 
-    def list(self) -> list[AlertModel]: ...
+    def get_by_id(self, alert_id: int) -> AlertModel | None: ...
+
+    def acknowledge(self, alert: AlertModel) -> AlertModel: ...
+
+    def resolve(self, alert: AlertModel) -> AlertModel: ...
+
+    def list(
+        self,
+        sensor_id: str | None,
+        status: AlertStatus | None,
+        condition: AlertCondition | None,
+        severity: AlertSeverity | None,
+        offset: int,
+        limit: int,
+    ) -> list[AlertModel]: ...
 
 
 class AlertStrategy(Protocol):
@@ -225,8 +242,41 @@ class AlertService:
     def __init__(self, repo: AlertRepository) -> None:
         self._repo = repo
 
-    def list(self) -> list[AlertModel]:
-        return self._repo.list()
+    def get(self, alert_id: int) -> AlertModel:
+        alert = self._repo.get_by_id(alert_id)
+        if alert is None:
+            raise ResourceNotFoundError("Alerta no encontrada")
+        return alert
+
+    def acknowledge(self, alert_id: int) -> AlertModel:
+        alert = self.get(alert_id)
+        if alert.status != AlertStatus.OPEN.value:
+            raise ResourceConflictError("La alerta no puede ser reconocida")
+        return self._repo.acknowledge(alert)
+
+    def resolve(self, alert_id: int) -> AlertModel:
+        alert = self.get(alert_id)
+        if alert.status == AlertStatus.RESOLVED.value:
+            raise ResourceConflictError("La alerta ya está resuelta")
+        return self._repo.resolve(alert)
+
+    def list(
+        self,
+        sensor_id: str | None,
+        status: AlertStatus | None,
+        condition: AlertCondition | None,
+        severity: AlertSeverity | None,
+        offset: int,
+        limit: int,
+    ) -> list[AlertModel]:
+        return self._repo.list(
+            sensor_id,
+            status,
+            condition,
+            severity,
+            offset,
+            limit,
+        )
 
 
 class ReadingService:

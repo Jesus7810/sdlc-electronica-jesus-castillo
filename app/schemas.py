@@ -3,7 +3,13 @@ from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.domain import SensorType, validate_sensor_configuration
+from app.domain import (
+    AlertCondition,
+    AlertSeverity,
+    AlertStatus,
+    SensorType,
+    validate_sensor_configuration,
+)
 
 
 class SensorBase(BaseModel):
@@ -122,9 +128,9 @@ class AlertOut(BaseModel):
 
     id: int
     sensor_id: str
-    condition: str
-    severity: str
-    status: str
+    condition: AlertCondition
+    severity: AlertSeverity
+    status: AlertStatus
     origin_reading_id: int
     origin_reading_value: float
     origin_threshold: float
@@ -136,11 +142,15 @@ class AlertOut(BaseModel):
     opened_at: datetime
     last_triggered_at: datetime
     updated_at: datetime
+    acknowledged_at: datetime | None
+    resolved_at: datetime | None
 
     @field_validator(
         "opened_at",
         "last_triggered_at",
         "updated_at",
+        "acknowledged_at",
+        "resolved_at",
         mode="before",
     )
     @classmethod

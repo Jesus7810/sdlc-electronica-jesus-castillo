@@ -103,15 +103,31 @@ class AlertModel(Base):
             "last_severity IN ('WARNING', 'CRITICAL')",
             name="ck_alerts_last_severity",
         ),
-        CheckConstraint("status = 'open'", name="ck_alerts_status_open"),
+        CheckConstraint(
+            "status IN ('open', 'acknowledged', 'resolved')",
+            name="ck_alerts_status",
+        ),
+        CheckConstraint(
+            "status != 'acknowledged' OR acknowledged_at IS NOT NULL",
+            name="ck_alerts_acknowledged_at",
+        ),
+        CheckConstraint(
+            "status != 'resolved' OR resolved_at IS NOT NULL",
+            name="ck_alerts_resolved_at",
+        ),
+        CheckConstraint(
+            "status NOT IN ('open', 'acknowledged') OR resolved_at IS NULL",
+            name="ck_alerts_unresolved_without_resolved_at",
+        ),
         Index(
-            "uq_alerts_open_sensor_condition",
+            "uq_alerts_unresolved_sensor_condition",
             "sensor_id",
             "condition",
             unique=True,
-            postgresql_where=text("status = 'open'"),
-            sqlite_where=text("status = 'open'"),
+            postgresql_where=text("status IN ('open', 'acknowledged')"),
+            sqlite_where=text("status IN ('open', 'acknowledged')"),
         ),
+        Index("ix_alerts_opened_at_id_desc", text("opened_at DESC"), text("id DESC")),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -147,3 +163,11 @@ class AlertModel(Base):
     )
     last_triggered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    acknowledged_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )

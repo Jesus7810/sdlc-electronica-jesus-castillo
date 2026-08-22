@@ -1,10 +1,10 @@
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import Select, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.domain import AlertSeverity, Anomaly
+from app.domain import AlertCondition, AlertSeverity, AlertStatus, Anomaly
 from app.models import AlertModel, ReadingModel, SensorModel
 
 
@@ -138,60 +138,169 @@ class SqlAlchemyAlertRepository:
             return timestamp.replace(tzinfo=UTC)
         return timestamp.astimezone(UTC)
 
+    def _unresolved_statement(
+        self,
+        sensor_id: str,
+        condition: AlertCondition,
+        lock: bool = False,
+    ) -> Select[tuple[AlertModel]]:
+        statement = select(AlertModel).where(
+            AlertModel.sensor_id == sensor_id,
+            AlertModel.condition == condition.value,
+            AlertModel.status.in_(
+                [
+                    AlertStatus.OPEN.value,
+                    AlertStatus.ACKNOWLEDGED.value,
+                ]
+            ),
+        )
+        if lock:
+            statement = statement.with_for_update()
+        return statement
+
+    def _find_unresolved(
+        self,
+        sensor_id: str,
+        condition: AlertCondition,
+        lock: bool = False,
+    ) -> AlertModel | None:
+        return self._db.scalar(
+            self._unresolved_statement(sensor_id, condition, lock=lock)
+        )
+
+    @staticmethod
+    def _next_updated_at(alert: AlertModel) -> datetime:
+        now = datetime.now(UTC)
+        previous = SqlAlchemyAlertRepository._as_utc(alert.updated_at)
+        if now <= previous:
+            return previous + timedelta(microseconds=1)
+        return now
+
+    def _apply_evidence(
+        self,
+        alert: AlertModel,
+        reading: ReadingModel,
+        anomaly: Anomaly,
+    ) -> None:
+        if (
+            alert.status == AlertStatus.ACKNOWLEDGED.value
+            and alert.severity == AlertSeverity.WARNING.value
+            and anomaly.severity == AlertSeverity.CRITICAL
+        ):
+            alert.status = AlertStatus.OPEN.value
+        if anomaly.severity == AlertSeverity.CRITICAL:
+            alert.severity = AlertSeverity.CRITICAL.value
+        alert.last_reading_id = reading.id
+        alert.last_reading_value = reading.value
+        alert.last_threshold = anomaly.threshold
+        alert.last_severity = anomaly.severity.value
+        alert.last_triggered_at = self._as_utc(reading.timestamp)
+        alert.updated_at = self._next_updated_at(alert)
+
+    def _new_alert(self, reading: ReadingModel, anomaly: Anomaly) -> AlertModel:
+        now = datetime.now(UTC)
+        return AlertModel(
+            sensor_id=reading.sensor_id,
+            condition=anomaly.condition.value,
+            severity=anomaly.severity.value,
+            status=AlertStatus.OPEN.value,
+            origin_reading_id=reading.id,
+            origin_reading_value=reading.value,
+            origin_threshold=anomaly.threshold,
+            origin_severity=anomaly.severity.value,
+            last_reading_id=reading.id,
+            last_reading_value=reading.value,
+            last_threshold=anomaly.threshold,
+            last_severity=anomaly.severity.value,
+            opened_at=now,
+            last_triggered_at=self._as_utc(reading.timestamp),
+            updated_at=now,
+            acknowledged_at=None,
+            resolved_at=None,
+        )
+
     def open_or_update(
         self,
         reading: ReadingModel,
         anomaly: Anomaly,
     ) -> AlertModel:
-        statement = select(AlertModel).where(
-            AlertModel.sensor_id == reading.sensor_id,
-            AlertModel.condition == anomaly.condition.value,
-            AlertModel.status == "open",
-        )
-        alert = self._db.scalar(statement)
-        triggered_at = self._as_utc(reading.timestamp)
-
+        alert = self._find_unresolved(reading.sensor_id, anomaly.condition, lock=True)
         if alert is not None:
-            updated_at = datetime.now(UTC)
-            previous_updated_at = self._as_utc(alert.updated_at)
-            if updated_at <= previous_updated_at:
-                updated_at = previous_updated_at + timedelta(microseconds=1)
-            alert.last_reading_id = reading.id
-            alert.last_reading_value = reading.value
-            alert.last_threshold = anomaly.threshold
-            alert.last_severity = anomaly.severity.value
-            alert.last_triggered_at = triggered_at
-            alert.updated_at = updated_at
-            if anomaly.severity == AlertSeverity.CRITICAL:
-                alert.severity = AlertSeverity.CRITICAL.value
-        else:
-            now = datetime.now(UTC)
-            alert = AlertModel(
-                sensor_id=reading.sensor_id,
-                condition=anomaly.condition.value,
-                severity=anomaly.severity.value,
-                status="open",
-                origin_reading_id=reading.id,
-                origin_reading_value=reading.value,
-                origin_threshold=anomaly.threshold,
-                origin_severity=anomaly.severity.value,
-                last_reading_id=reading.id,
-                last_reading_value=reading.value,
-                last_threshold=anomaly.threshold,
-                last_severity=anomaly.severity.value,
-                opened_at=now,
-                last_triggered_at=triggered_at,
-                updated_at=now,
-            )
-            self._db.add(alert)
-        try:
+            self._apply_evidence(alert, reading, anomaly)
             self._db.commit()
+            self._db.refresh(alert)
+            return alert
+
+        alert = self._new_alert(reading, anomaly)
+        try:
+            with self._db.begin_nested():
+                self._db.add(alert)
+                self._db.flush()
         except IntegrityError:
-            self._db.rollback()
-            raise
+            alert = self._find_unresolved(
+                reading.sensor_id,
+                anomaly.condition,
+                lock=True,
+            )
+            if alert is None:
+                raise
+            self._apply_evidence(alert, reading, anomaly)
+        self._db.commit()
         self._db.refresh(alert)
         return alert
 
-    def list(self) -> list[AlertModel]:
-        statement = select(AlertModel).order_by(AlertModel.id)
+    def get_by_id(self, alert_id: int) -> AlertModel | None:
+        return self._db.get(AlertModel, alert_id)
+
+    def acknowledge(self, alert: AlertModel) -> AlertModel:
+        changed_at = self._next_updated_at(alert)
+        alert.status = AlertStatus.ACKNOWLEDGED.value
+        if alert.acknowledged_at is None:
+            alert.acknowledged_at = changed_at
+        alert.updated_at = changed_at
+        self._db.commit()
+        self._db.refresh(alert)
+        return alert
+
+    def resolve(self, alert: AlertModel) -> AlertModel:
+        changed_at = self._next_updated_at(alert)
+        alert.status = AlertStatus.RESOLVED.value
+        alert.resolved_at = changed_at
+        alert.updated_at = changed_at
+        self._db.commit()
+        self._db.refresh(alert)
+        return alert
+
+    def list(
+        self,
+        sensor_id: str | None,
+        status: AlertStatus | None,
+        condition: AlertCondition | None,
+        severity: AlertSeverity | None,
+        offset: int,
+        limit: int,
+    ) -> list[AlertModel]:
+        statement = select(AlertModel)
+        if sensor_id is not None:
+            statement = statement.where(AlertModel.sensor_id == sensor_id)
+        if status is None:
+            statement = statement.where(
+                AlertModel.status.in_(
+                    [
+                        AlertStatus.OPEN.value,
+                        AlertStatus.ACKNOWLEDGED.value,
+                    ]
+                )
+            )
+        else:
+            statement = statement.where(AlertModel.status == status.value)
+        if condition is not None:
+            statement = statement.where(AlertModel.condition == condition.value)
+        if severity is not None:
+            statement = statement.where(AlertModel.severity == severity.value)
+        statement = statement.order_by(
+            AlertModel.opened_at.desc(),
+            AlertModel.id.desc(),
+        )
+        statement = statement.offset(offset).limit(limit)
         return list(self._db.scalars(statement).all())
