@@ -1,11 +1,17 @@
+import logging
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.domain import (
+    AlertCondition,
+    AlertSeverity,
+    AlertStatus,
+    DatabaseUnavailableError,
     DomainValidationError,
     ResourceConflictError,
     ResourceNotFoundError,
@@ -13,6 +19,7 @@ from app.domain import (
 from app.models import AlertModel, ReadingModel, SensorModel
 from app.repositories import (
     SqlAlchemyAlertRepository,
+    SqlAlchemyOperationalRepository,
     SqlAlchemyReadingRepository,
     SqlAlchemySensorRepository,
 )
@@ -23,7 +30,7 @@ from app.schemas import (
     SensorReadingCreate,
     SensorReadingIn,
     SensorReadingOut,
-    SensorReadingUpdate,
+    SensorReadingStatisticsOut,
     SensorUpdate,
 )
 from app.services import (
@@ -32,6 +39,9 @@ from app.services import (
     AlertStrategy,
     DatabaseAlertStrategy,
     InvalidDateRangeError,
+    InvalidTimestampError,
+    OperationalRepository,
+    OperationalService,
     ReadingConflictError,
     ReadingRepository,
     ReadingService,
@@ -40,6 +50,7 @@ from app.services import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def get_sensor_repository(
@@ -58,6 +69,18 @@ def get_alert_repository(
     db: Annotated[Session, Depends(get_db)],
 ) -> AlertRepository:
     return SqlAlchemyAlertRepository(db)
+
+
+def get_operational_repository(
+    db: Annotated[Session, Depends(get_db)],
+) -> OperationalRepository:
+    return SqlAlchemyOperationalRepository(db)
+
+
+def get_operational_service(
+    repo: Annotated[OperationalRepository, Depends(get_operational_repository)],
+) -> OperationalService:
+    return OperationalService(repo)
 
 
 def get_alert_strategy(
@@ -102,13 +125,115 @@ def alert_out(alert: AlertModel) -> AlertOut:
 @router.get("/alerts", response_model=list[AlertOut])
 def list_alerts(
     service: Annotated[AlertService, Depends(get_alert_service)],
+    sensor_id: str | None = None,
+    status: AlertStatus | None = None,
+    condition: AlertCondition | None = None,
+    severity: AlertSeverity | None = None,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> list[AlertOut]:
-    return [alert_out(alert) for alert in service.list()]
+    return [
+        alert_out(alert)
+        for alert in service.list(
+            sensor_id,
+            status,
+            condition,
+            severity,
+            offset,
+            limit,
+        )
+    ]
+
+
+@router.get("/alerts/{alert_id}", response_model=AlertOut)
+def get_alert(
+    alert_id: int,
+    service: Annotated[AlertService, Depends(get_alert_service)],
+) -> AlertOut:
+    try:
+        return alert_out(service.get(alert_id))
+    except ResourceNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@router.post("/alerts/{alert_id}/acknowledge", response_model=AlertOut)
+def acknowledge_alert(
+    alert_id: int,
+    service: Annotated[AlertService, Depends(get_alert_service)],
+) -> AlertOut:
+    try:
+        return alert_out(service.acknowledge(alert_id))
+    except ResourceNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ResourceConflictError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@router.post("/alerts/{alert_id}/resolve", response_model=AlertOut)
+def resolve_alert(
+    alert_id: int,
+    service: Annotated[AlertService, Depends(get_alert_service)],
+) -> AlertOut:
+    try:
+        return alert_out(service.resolve(alert_id))
+    except ResourceNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ResourceConflictError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 @router.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@router.get("/ready")
+def ready(
+    service: Annotated[OperationalService, Depends(get_operational_service)],
+) -> Response:
+    try:
+        service.ready()
+    except DatabaseUnavailableError:
+        logger.error("database_unavailable", extra={"endpoint": "ready"})
+        return JSONResponse(status_code=503, content={"status": "unavailable"})
+    return JSONResponse(status_code=200, content={"status": "ready"})
+
+
+def prometheus_metrics(
+    active_sensors: int,
+    registered_readings: int,
+    unresolved_alerts: int,
+) -> str:
+    return (
+        "# HELP sensorhub_active_sensors Current number of active sensors.\n"
+        "# TYPE sensorhub_active_sensors gauge\n"
+        f"sensorhub_active_sensors {active_sensors}\n"
+        "# HELP sensorhub_registered_readings Current number of persisted readings.\n"
+        "# TYPE sensorhub_registered_readings gauge\n"
+        f"sensorhub_registered_readings {registered_readings}\n"
+        "# HELP sensorhub_unresolved_alerts Current number of unresolved alerts.\n"
+        "# TYPE sensorhub_unresolved_alerts gauge\n"
+        f"sensorhub_unresolved_alerts {unresolved_alerts}\n"
+    )
+
+
+@router.get("/metrics")
+def metrics(
+    service: Annotated[OperationalService, Depends(get_operational_service)],
+) -> Response:
+    try:
+        snapshot = service.metrics()
+    except DatabaseUnavailableError:
+        logger.error("database_unavailable", extra={"endpoint": "metrics"})
+        return JSONResponse(status_code=503, content={"status": "unavailable"})
+    return Response(
+        content=prometheus_metrics(
+            snapshot.active_sensors,
+            snapshot.registered_readings,
+            snapshot.unresolved_alerts,
+        ),
+        media_type="text/plain; version=0.0.4",
+    )
 
 
 @router.post("/sensors", response_model=SensorOut, status_code=201)
@@ -121,11 +246,15 @@ def create_sensor(
             service.create(
                 data.id,
                 data.name,
+                data.location,
                 data.type,
                 data.unit,
                 data.min_value,
+                data.low_critical_threshold,
+                data.low_warning_threshold,
+                data.high_warning_threshold,
+                data.high_critical_threshold,
                 data.max_value,
-                data.threshold,
             )
         )
     except ResourceConflictError as error:
@@ -135,8 +264,9 @@ def create_sensor(
 @router.get("/sensors", response_model=list[SensorOut])
 def list_sensors(
     service: Annotated[SensorService, Depends(get_sensor_service)],
+    include_inactive: bool = False,
 ) -> list[SensorOut]:
-    return [sensor_out(sensor) for sensor in service.list()]
+    return [sensor_out(sensor) for sensor in service.list(include_inactive)]
 
 
 @router.get("/sensors/{sensor_id}", response_model=SensorOut)
@@ -171,13 +301,24 @@ def update_sensor(
         raise HTTPException(status_code=409, detail=str(error)) from error
 
 
-@router.delete("/sensors/{sensor_id}", status_code=204)
-def delete_sensor(
+@router.post("/sensors/{sensor_id}/deactivate", response_model=SensorOut)
+def deactivate_sensor(
     sensor_id: str,
     service: Annotated[SensorService, Depends(get_sensor_service)],
-) -> None:
+) -> SensorOut:
     try:
-        service.delete(sensor_id)
+        return sensor_out(service.deactivate(sensor_id))
+    except ResourceNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@router.post("/sensors/{sensor_id}/activate", response_model=SensorOut)
+def activate_sensor(
+    sensor_id: str,
+    service: Annotated[SensorService, Depends(get_sensor_service)],
+) -> SensorOut:
+    try:
+        return sensor_out(service.activate(sensor_id))
     except ResourceNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
@@ -196,6 +337,8 @@ def record_reading(
         )
     except ResourceNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+    except ResourceConflictError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     except DomainValidationError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     except ValueError as error:
@@ -248,9 +391,32 @@ def list_sensor_readings(
         raise HTTPException(status_code=404, detail=str(error)) from error
     try:
         readings = service.list(sensor_id, offset, limit, from_date, to_date)
+    except InvalidTimestampError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
     except InvalidDateRangeError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     return [reading_out(reading) for reading in readings]
+
+
+@router.get(
+    "/sensors/{sensor_id}/readings/statistics",
+    response_model=SensorReadingStatisticsOut,
+)
+def get_sensor_reading_statistics(
+    sensor_id: str,
+    service: Annotated[ReadingService, Depends(get_reading_service)],
+    from_date: Annotated[datetime | None, Query(alias="from")] = None,
+    to_date: Annotated[datetime | None, Query(alias="to")] = None,
+) -> SensorReadingStatisticsOut:
+    try:
+        statistics = service.statistics(sensor_id, from_date, to_date)
+    except ResourceNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except InvalidTimestampError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except InvalidDateRangeError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return SensorReadingStatisticsOut.model_validate(statistics)
 
 
 @router.get("/readings", response_model=list[SensorReadingOut])
@@ -272,27 +438,3 @@ def get_reading(
     if reading is None:
         raise HTTPException(status_code=404, detail="Lectura no encontrada")
     return reading_out(reading)
-
-
-@router.patch("/readings/{reading_id}", response_model=SensorReadingOut)
-def update_reading(
-    reading_id: int,
-    changes: SensorReadingUpdate,
-    service: Annotated[ReadingService, Depends(get_reading_service)],
-) -> SensorReadingOut:
-    try:
-        updated = service.update(reading_id, changes.value, changes.unit)
-    except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
-    if updated is None:
-        raise HTTPException(status_code=404, detail="Lectura no encontrada")
-    return reading_out(updated)
-
-
-@router.delete("/readings/{reading_id}", status_code=204)
-def delete_reading(
-    reading_id: int,
-    service: Annotated[ReadingService, Depends(get_reading_service)],
-) -> None:
-    if not service.delete(reading_id):
-        raise HTTPException(status_code=404, detail="Lectura no encontrada")

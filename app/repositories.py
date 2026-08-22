@@ -1,9 +1,21 @@
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
-from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import Select, func, select, text
+from sqlalchemy.engine import Result
+from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError, TimeoutError
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.base import Executable
 
+from app.domain import (
+    AlertCondition,
+    AlertSeverity,
+    AlertStatus,
+    Anomaly,
+    DatabaseUnavailableError,
+    OperationalMetrics,
+    ReadingAggregate,
+)
 from app.models import AlertModel, ReadingModel, SensorModel
 
 
@@ -23,8 +35,10 @@ class SqlAlchemySensorRepository:
         self._db.refresh(sensor)
         return sensor
 
-    def list(self) -> list[SensorModel]:
+    def list(self, include_inactive: bool = False) -> list[SensorModel]:
         statement = select(SensorModel).order_by(SensorModel.id)
+        if not include_inactive:
+            statement = statement.where(SensorModel.is_active.is_(True))
         return list(self._db.scalars(statement).all())
 
     def get_by_id(self, sensor_id: str) -> SensorModel | None:
@@ -41,10 +55,6 @@ class SqlAlchemySensorRepository:
         self._db.refresh(sensor)
         return sensor
 
-    def delete(self, sensor: SensorModel) -> None:
-        self._db.delete(sensor)
-        self._db.commit()
-
 
 class SqlAlchemyReadingRepository:
     """Implementa la persistencia de lecturas mediante SQLAlchemy."""
@@ -57,13 +67,13 @@ class SqlAlchemyReadingRepository:
         sensor_id: str,
         value: float,
         unit: str,
-        timestamp: datetime | None = None,
+        timestamp: datetime,
     ) -> ReadingModel:
         reading = ReadingModel(
             sensor_id=sensor_id,
             value=value,
             unit=unit,
-            **({"timestamp": timestamp} if timestamp is not None else {}),
+            timestamp=timestamp,
         )
 
         try:
@@ -127,41 +137,117 @@ class SqlAlchemyReadingRepository:
     ) -> ReadingModel | None:
         return self._db.get(ReadingModel, reading_id)
 
-    def update(
+    def statistics(
         self,
-        reading_id: int,
-        value: float | None,
-        unit: str | None,
-    ) -> ReadingModel | None:
-        reading = self.get_by_id(reading_id)
+        sensor_id: str,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
+    ) -> ReadingAggregate:
+        statement = select(
+            func.count(ReadingModel.id).label("count"),
+            func.min(ReadingModel.value).label("min_value"),
+            func.max(ReadingModel.value).label("max_value"),
+            func.avg(ReadingModel.value).label("average_value"),
+        ).where(ReadingModel.sensor_id == sensor_id)
+        if from_date is not None:
+            statement = statement.where(ReadingModel.timestamp >= from_date)
+        if to_date is not None:
+            statement = statement.where(ReadingModel.timestamp <= to_date)
+        result = self._db.execute(statement).one()._mapping
+        return ReadingAggregate(
+            count=int(result["count"]),
+            min_value=(
+                float(result["min_value"])
+                if result["min_value"] is not None
+                else None
+            ),
+            max_value=(
+                float(result["max_value"])
+                if result["max_value"] is not None
+                else None
+            ),
+            average_value=(
+                float(result["average_value"])
+                if result["average_value"] is not None
+                else None
+            ),
+        )
 
-        if reading is None:
-            return None
 
-        if value is not None:
-            reading.value = value
+class SqlAlchemyOperationalRepository:
+    """Consulta el estado operativo sin cargar entidades de dominio."""
 
-        if unit is not None:
-            reading.unit = unit
+    def __init__(self, db: Session) -> None:
+        self._db = db
 
-        self._db.commit()
-        self._db.refresh(reading)
-
-        return reading
-
-    def delete(
-        self,
-        reading_id: int,
-    ) -> bool:
-        reading = self.get_by_id(reading_id)
-
-        if reading is None:
+    @staticmethod
+    def _is_infrastructure_failure(error: DBAPIError) -> bool:
+        if error.connection_invalidated:
+            return True
+        if not isinstance(error, OperationalError):
             return False
+        message = str(error.orig).lower()
+        infrastructure_markers = (
+            "connection refused",
+            "connection reset",
+            "connection timed out",
+            "connection timeout",
+            "could not connect",
+            "could not translate host name",
+            "could not resolve hostname",
+            "name or service not known",
+            "temporary failure in name resolution",
+            "network is unreachable",
+            "no route to host",
+            "server closed",
+            "timeout expired",
+            "unable to open database file",
+        )
+        return any(marker in message for marker in infrastructure_markers)
 
-        self._db.delete(reading)
-        self._db.commit()
+    def _execute_operational_query(self, statement: Executable) -> Result[Any]:
+        try:
+            return self._db.execute(statement)
+        except TimeoutError as error:
+            raise DatabaseUnavailableError from error
+        except DBAPIError as error:
+            if self._is_infrastructure_failure(error):
+                raise DatabaseUnavailableError from error
+            raise
 
-        return True
+    def ping(self) -> None:
+        self._execute_operational_query(text("SELECT 1"))
+
+    def metrics(self) -> OperationalMetrics:
+        active_sensors = (
+            select(func.count(SensorModel.id))
+            .where(SensorModel.is_active.is_(True))
+            .scalar_subquery()
+        )
+        registered_readings = select(func.count(ReadingModel.id)).scalar_subquery()
+        unresolved_alerts = (
+            select(func.count(AlertModel.id))
+            .where(
+                AlertModel.status.in_(
+                    [
+                        AlertStatus.OPEN.value,
+                        AlertStatus.ACKNOWLEDGED.value,
+                    ]
+                )
+            )
+            .scalar_subquery()
+        )
+        statement = select(
+            active_sensors.label("active_sensors"),
+            registered_readings.label("registered_readings"),
+            unresolved_alerts.label("unresolved_alerts"),
+        )
+        result = self._execute_operational_query(statement).one()._mapping
+        return OperationalMetrics(
+            active_sensors=int(result["active_sensors"]),
+            registered_readings=int(result["registered_readings"]),
+            unresolved_alerts=int(result["unresolved_alerts"]),
+        )
 
 
 class SqlAlchemyAlertRepository:
@@ -170,28 +256,175 @@ class SqlAlchemyAlertRepository:
     def __init__(self, db: Session) -> None:
         self._db = db
 
-    def add(
+    @staticmethod
+    def _as_utc(timestamp: datetime) -> datetime:
+        if timestamp.tzinfo is None or timestamp.utcoffset() is None:
+            return timestamp.replace(tzinfo=UTC)
+        return timestamp.astimezone(UTC)
+
+    def _unresolved_statement(
         self,
         sensor_id: str,
-        reading_id: int,
-        reading_value: float,
-        threshold: float,
-    ) -> AlertModel:
-        alert = AlertModel(
-            sensor_id=sensor_id,
-            reading_id=reading_id,
-            reading_value=reading_value,
-            threshold=threshold,
+        condition: AlertCondition,
+        lock: bool = False,
+    ) -> Select[tuple[AlertModel]]:
+        statement = select(AlertModel).where(
+            AlertModel.sensor_id == sensor_id,
+            AlertModel.condition == condition.value,
+            AlertModel.status.in_(
+                [
+                    AlertStatus.OPEN.value,
+                    AlertStatus.ACKNOWLEDGED.value,
+                ]
+            ),
         )
-        try:
-            self._db.add(alert)
+        if lock:
+            statement = statement.with_for_update()
+        return statement
+
+    def _find_unresolved(
+        self,
+        sensor_id: str,
+        condition: AlertCondition,
+        lock: bool = False,
+    ) -> AlertModel | None:
+        return self._db.scalar(
+            self._unresolved_statement(sensor_id, condition, lock=lock)
+        )
+
+    @staticmethod
+    def _next_updated_at(alert: AlertModel) -> datetime:
+        now = datetime.now(UTC)
+        previous = SqlAlchemyAlertRepository._as_utc(alert.updated_at)
+        if now <= previous:
+            return previous + timedelta(microseconds=1)
+        return now
+
+    def _apply_evidence(
+        self,
+        alert: AlertModel,
+        reading: ReadingModel,
+        anomaly: Anomaly,
+    ) -> None:
+        if (
+            alert.status == AlertStatus.ACKNOWLEDGED.value
+            and alert.severity == AlertSeverity.WARNING.value
+            and anomaly.severity == AlertSeverity.CRITICAL
+        ):
+            alert.status = AlertStatus.OPEN.value
+        if anomaly.severity == AlertSeverity.CRITICAL:
+            alert.severity = AlertSeverity.CRITICAL.value
+        alert.last_reading_id = reading.id
+        alert.last_reading_value = reading.value
+        alert.last_threshold = anomaly.threshold
+        alert.last_severity = anomaly.severity.value
+        alert.last_triggered_at = self._as_utc(reading.timestamp)
+        alert.updated_at = self._next_updated_at(alert)
+
+    def _new_alert(self, reading: ReadingModel, anomaly: Anomaly) -> AlertModel:
+        now = datetime.now(UTC)
+        return AlertModel(
+            sensor_id=reading.sensor_id,
+            condition=anomaly.condition.value,
+            severity=anomaly.severity.value,
+            status=AlertStatus.OPEN.value,
+            origin_reading_id=reading.id,
+            origin_reading_value=reading.value,
+            origin_threshold=anomaly.threshold,
+            origin_severity=anomaly.severity.value,
+            last_reading_id=reading.id,
+            last_reading_value=reading.value,
+            last_threshold=anomaly.threshold,
+            last_severity=anomaly.severity.value,
+            opened_at=now,
+            last_triggered_at=self._as_utc(reading.timestamp),
+            updated_at=now,
+            acknowledged_at=None,
+            resolved_at=None,
+        )
+
+    def open_or_update(
+        self,
+        reading: ReadingModel,
+        anomaly: Anomaly,
+    ) -> AlertModel:
+        alert = self._find_unresolved(reading.sensor_id, anomaly.condition, lock=True)
+        if alert is not None:
+            self._apply_evidence(alert, reading, anomaly)
             self._db.commit()
+            self._db.refresh(alert)
+            return alert
+
+        alert = self._new_alert(reading, anomaly)
+        try:
+            with self._db.begin_nested():
+                self._db.add(alert)
+                self._db.flush()
         except IntegrityError:
-            self._db.rollback()
-            raise
+            alert = self._find_unresolved(
+                reading.sensor_id,
+                anomaly.condition,
+                lock=True,
+            )
+            if alert is None:
+                raise
+            self._apply_evidence(alert, reading, anomaly)
+        self._db.commit()
         self._db.refresh(alert)
         return alert
 
-    def list(self) -> list[AlertModel]:
-        statement = select(AlertModel).order_by(AlertModel.id)
+    def get_by_id(self, alert_id: int) -> AlertModel | None:
+        return self._db.get(AlertModel, alert_id)
+
+    def acknowledge(self, alert: AlertModel) -> AlertModel:
+        changed_at = self._next_updated_at(alert)
+        alert.status = AlertStatus.ACKNOWLEDGED.value
+        if alert.acknowledged_at is None:
+            alert.acknowledged_at = changed_at
+        alert.updated_at = changed_at
+        self._db.commit()
+        self._db.refresh(alert)
+        return alert
+
+    def resolve(self, alert: AlertModel) -> AlertModel:
+        changed_at = self._next_updated_at(alert)
+        alert.status = AlertStatus.RESOLVED.value
+        alert.resolved_at = changed_at
+        alert.updated_at = changed_at
+        self._db.commit()
+        self._db.refresh(alert)
+        return alert
+
+    def list(
+        self,
+        sensor_id: str | None,
+        status: AlertStatus | None,
+        condition: AlertCondition | None,
+        severity: AlertSeverity | None,
+        offset: int,
+        limit: int,
+    ) -> list[AlertModel]:
+        statement = select(AlertModel)
+        if sensor_id is not None:
+            statement = statement.where(AlertModel.sensor_id == sensor_id)
+        if status is None:
+            statement = statement.where(
+                AlertModel.status.in_(
+                    [
+                        AlertStatus.OPEN.value,
+                        AlertStatus.ACKNOWLEDGED.value,
+                    ]
+                )
+            )
+        else:
+            statement = statement.where(AlertModel.status == status.value)
+        if condition is not None:
+            statement = statement.where(AlertModel.condition == condition.value)
+        if severity is not None:
+            statement = statement.where(AlertModel.severity == severity.value)
+        statement = statement.order_by(
+            AlertModel.opened_at.desc(),
+            AlertModel.id.desc(),
+        )
+        statement = statement.offset(offset).limit(limit)
         return list(self._db.scalars(statement).all())

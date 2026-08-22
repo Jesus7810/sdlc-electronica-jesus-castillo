@@ -5,9 +5,17 @@ from sqlalchemy.exc import IntegrityError
 
 from app.domain import (
     VALID_UNITS,
+    AlertCondition,
+    AlertSeverity,
+    AlertStatus,
+    Anomaly,
     DomainValidationError,
+    OperationalMetrics,
+    ReadingAggregate,
     ResourceConflictError,
     ResourceNotFoundError,
+    SensorReadingStatistics,
+    classify_anomaly,
     validate_sensor_configuration,
 )
 from app.models import AlertModel, ReadingModel, SensorModel
@@ -15,12 +23,11 @@ from app.models import AlertModel, ReadingModel, SensorModel
 
 class SensorRepository(Protocol):
     def add(self, sensor: SensorModel) -> SensorModel: ...
-    def list(self) -> list[SensorModel]: ...
+    def list(self, include_inactive: bool = False) -> list[SensorModel]: ...
     def get_by_id(self, sensor_id: str) -> SensorModel | None: ...
     def update(
         self, sensor: SensorModel, changes: dict[str, object]
     ) -> SensorModel: ...
-    def delete(self, sensor: SensorModel) -> None: ...
 
 
 class SensorService:
@@ -36,29 +43,42 @@ class SensorService:
         self,
         sensor_id: str,
         name: str,
+        location: str,
         sensor_type: str,
         unit: str,
         min_value: float,
+        low_critical_threshold: float,
+        low_warning_threshold: float,
+        high_warning_threshold: float,
+        high_critical_threshold: float,
         max_value: float,
-        threshold: float,
     ) -> SensorModel:
         validate_sensor_configuration(
             sensor_type,
             unit,
             min_value,
+            low_critical_threshold,
+            low_warning_threshold,
+            high_warning_threshold,
+            high_critical_threshold,
             max_value,
-            threshold,
         )
         if self._repo.get_by_id(sensor_id) is not None:
             raise ResourceConflictError("El identificador del sensor ya existe")
         sensor = SensorModel(
             id=sensor_id,
             name=name,
+            location=location,
             type=sensor_type,
             unit=unit,
             min_value=min_value,
+            low_critical_threshold=low_critical_threshold,
+            low_warning_threshold=low_warning_threshold,
+            high_warning_threshold=high_warning_threshold,
+            high_critical_threshold=high_critical_threshold,
             max_value=max_value,
-            threshold=threshold,
+            is_active=True,
+            deactivated_at=None,
         )
         try:
             return self._repo.add(sensor)
@@ -67,8 +87,8 @@ class SensorService:
                 "El identificador del sensor ya existe"
             ) from error
 
-    def list(self) -> list[SensorModel]:
-        return self._repo.list()
+    def list(self, include_inactive: bool = False) -> list[SensorModel]:
+        return self._repo.list(include_inactive)
 
     def get(self, sensor_id: str) -> SensorModel:
         sensor = self._repo.get_by_id(sensor_id)
@@ -85,10 +105,32 @@ class SensorService:
         sensor_type = cast(str, changes.get("type", sensor.type))
         unit = cast(str, changes.get("unit", sensor.unit))
         min_value = cast(float, changes.get("min_value", sensor.min_value))
+        low_critical_threshold = cast(
+            float,
+            changes.get("low_critical_threshold", sensor.low_critical_threshold),
+        )
+        low_warning_threshold = cast(
+            float,
+            changes.get("low_warning_threshold", sensor.low_warning_threshold),
+        )
+        high_warning_threshold = cast(
+            float,
+            changes.get("high_warning_threshold", sensor.high_warning_threshold),
+        )
+        high_critical_threshold = cast(
+            float,
+            changes.get("high_critical_threshold", sensor.high_critical_threshold),
+        )
         max_value = cast(float, changes.get("max_value", sensor.max_value))
-        threshold = cast(float, changes.get("threshold", sensor.threshold))
         validate_sensor_configuration(
-            sensor_type, unit, min_value, max_value, threshold
+            sensor_type,
+            unit,
+            min_value,
+            low_critical_threshold,
+            low_warning_threshold,
+            high_warning_threshold,
+            high_critical_threshold,
+            max_value,
         )
         has_readings = self._reading_repo.has_for_sensor(sensor_id)
         type_changed = sensor_type != sensor.type
@@ -103,8 +145,29 @@ class SensorService:
             raise ResourceConflictError("El nuevo rango excluye lecturas existentes")
         return self._repo.update(sensor, changes)
 
-    def delete(self, sensor_id: str) -> None:
-        self._repo.delete(self.get(sensor_id))
+    def deactivate(self, sensor_id: str) -> SensorModel:
+        sensor = self.get(sensor_id)
+        if not sensor.is_active:
+            return sensor
+        return self._repo.update(
+            sensor,
+            {
+                "is_active": False,
+                "deactivated_at": datetime.now(UTC),
+            },
+        )
+
+    def activate(self, sensor_id: str) -> SensorModel:
+        sensor = self.get(sensor_id)
+        if sensor.is_active:
+            return sensor
+        return self._repo.update(
+            sensor,
+            {
+                "is_active": True,
+                "deactivated_at": None,
+            },
+        )
 
 
 class ReadingRepository(Protocol):
@@ -113,7 +176,7 @@ class ReadingRepository(Protocol):
         sensor_id: str,
         value: float,
         unit: str,
-        timestamp: datetime | None = None,
+        timestamp: datetime,
     ) -> ReadingModel: ...
 
     def exists_at(self, sensor_id: str, timestamp: datetime) -> bool: ...
@@ -136,33 +199,57 @@ class ReadingRepository(Protocol):
         reading_id: int,
     ) -> ReadingModel | None: ...
 
-    def update(
-        self,
-        reading_id: int,
-        value: float | None,
-        unit: str | None,
-    ) -> ReadingModel | None: ...
-
-    def delete(self, reading_id: int) -> bool: ...
-
-
-class AlertRepository(Protocol):
-    def add(
+    def statistics(
         self,
         sensor_id: str,
-        reading_id: int,
-        reading_value: float,
-        threshold: float,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
+    ) -> ReadingAggregate: ...
+
+class AlertRepository(Protocol):
+    def open_or_update(
+        self, reading: ReadingModel, anomaly: Anomaly
     ) -> AlertModel: ...
 
-    def list(self) -> list[AlertModel]: ...
+    def get_by_id(self, alert_id: int) -> AlertModel | None: ...
+
+    def acknowledge(self, alert: AlertModel) -> AlertModel: ...
+
+    def resolve(self, alert: AlertModel) -> AlertModel: ...
+
+    def list(
+        self,
+        sensor_id: str | None,
+        status: AlertStatus | None,
+        condition: AlertCondition | None,
+        severity: AlertSeverity | None,
+        offset: int,
+        limit: int,
+    ) -> list[AlertModel]: ...
+
+
+class OperationalRepository(Protocol):
+    def ping(self) -> None: ...
+
+    def metrics(self) -> OperationalMetrics: ...
+
+
+class OperationalService:
+    def __init__(self, repo: OperationalRepository) -> None:
+        self._repo = repo
+
+    def ready(self) -> None:
+        self._repo.ping()
+
+    def metrics(self) -> OperationalMetrics:
+        return self._repo.metrics()
 
 
 class AlertStrategy(Protocol):
     def handle_anomaly(
         self,
         reading: ReadingModel,
-        threshold: float,
+        anomaly: Anomaly,
     ) -> None: ...
 
 
@@ -173,22 +260,50 @@ class DatabaseAlertStrategy:
     def handle_anomaly(
         self,
         reading: ReadingModel,
-        threshold: float,
+        anomaly: Anomaly,
     ) -> None:
-        self._repo.add(
-            reading.sensor_id,
-            reading.id,
-            reading.value,
-            threshold,
-        )
+        self._repo.open_or_update(reading, anomaly)
 
 
 class AlertService:
     def __init__(self, repo: AlertRepository) -> None:
         self._repo = repo
 
-    def list(self) -> list[AlertModel]:
-        return self._repo.list()
+    def get(self, alert_id: int) -> AlertModel:
+        alert = self._repo.get_by_id(alert_id)
+        if alert is None:
+            raise ResourceNotFoundError("Alerta no encontrada")
+        return alert
+
+    def acknowledge(self, alert_id: int) -> AlertModel:
+        alert = self.get(alert_id)
+        if alert.status != AlertStatus.OPEN.value:
+            raise ResourceConflictError("La alerta no puede ser reconocida")
+        return self._repo.acknowledge(alert)
+
+    def resolve(self, alert_id: int) -> AlertModel:
+        alert = self.get(alert_id)
+        if alert.status == AlertStatus.RESOLVED.value:
+            raise ResourceConflictError("La alerta ya está resuelta")
+        return self._repo.resolve(alert)
+
+    def list(
+        self,
+        sensor_id: str | None,
+        status: AlertStatus | None,
+        condition: AlertCondition | None,
+        severity: AlertSeverity | None,
+        offset: int,
+        limit: int,
+    ) -> list[AlertModel]:
+        return self._repo.list(
+            sensor_id,
+            status,
+            condition,
+            severity,
+            offset,
+            limit,
+        )
 
 
 class ReadingService:
@@ -217,6 +332,8 @@ class ReadingService:
         unit: str,
     ) -> SensorModel:
         sensor = self.require_sensor(sensor_id)
+        if not sensor.is_active:
+            raise ResourceConflictError("El sensor est\u00e1 inactivo")
         if sensor.type == "temperature" and value < -273.15:
             raise ValueError("Temperatura por debajo del cero absoluto")
         if unit != sensor.unit or VALID_UNITS[sensor.type] != unit:
@@ -229,6 +346,12 @@ class ReadingService:
             )
         return sensor
 
+    @staticmethod
+    def _normalize_utc_timestamp(timestamp: datetime) -> datetime:
+        if timestamp.tzinfo is None or timestamp.utcoffset() is None:
+            raise InvalidTimestampError("El timestamp debe incluir zona horaria")
+        return timestamp.astimezone(UTC)
+
     def record(
         self,
         sensor_id: str,
@@ -238,7 +361,9 @@ class ReadingService:
     ) -> ReadingModel:
         sensor = self._validate_for_sensor(sensor_id, value, unit)
 
-        effective_timestamp = timestamp or datetime.now(UTC).replace(tzinfo=None)
+        effective_timestamp = self._normalize_utc_timestamp(
+            timestamp or datetime.now(UTC)
+        )
         if self._repo.exists_at(sensor_id, effective_timestamp):
             raise ReadingConflictError(
                 "Ya existe una lectura para este sensor en esa fecha"
@@ -254,8 +379,15 @@ class ReadingService:
             raise ReadingConflictError(
                 "Ya existe una lectura para este sensor en esa fecha"
             ) from error
-        if created.value > sensor.threshold:
-            self._alert_strategy.handle_anomaly(created, sensor.threshold)
+        anomaly = classify_anomaly(
+            created.value,
+            sensor.low_critical_threshold,
+            sensor.low_warning_threshold,
+            sensor.high_warning_threshold,
+            sensor.high_critical_threshold,
+        )
+        if anomaly is not None:
+            self._alert_strategy.handle_anomaly(created, anomaly)
 
         return created
 
@@ -270,49 +402,72 @@ class ReadingService:
         from_date: datetime | None = None,
         to_date: datetime | None = None,
     ) -> list[ReadingModel]:
-        if from_date is not None and to_date is not None:
-            from_is_naive = from_date.tzinfo is None
-            to_is_naive = to_date.tzinfo is None
-            if from_is_naive != to_is_naive:
-                raise InvalidDateRangeError(
-                    "Los parámetros 'from' y 'to' deben usar la misma zona horaria"
-                )
-            if from_date > to_date:
-                raise InvalidDateRangeError(
-                    "El parámetro 'from' no puede ser posterior a 'to'"
-                )
+        normalized_from, normalized_to = self._normalize_date_range(
+            from_date,
+            to_date,
+        )
         return self._repo.list(
             sensor_id,
             offset,
             limit,
+            normalized_from,
+            normalized_to,
+        )
+
+    def statistics(
+        self,
+        sensor_id: str,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
+    ) -> SensorReadingStatistics:
+        sensor = self.require_sensor(sensor_id)
+        normalized_from, normalized_to = self._normalize_date_range(
             from_date,
             to_date,
         )
-
-    def update(
-        self,
-        reading_id: int,
-        value: float | None,
-        unit: str | None,
-    ) -> ReadingModel | None:
-        reading = self._repo.get_by_id(reading_id)
-        if reading is None:
-            return None
-        effective_value = value if value is not None else reading.value
-        effective_unit = unit if unit is not None else reading.unit
-        self._validate_for_sensor(
-            reading.sensor_id,
-            effective_value,
-            effective_unit,
+        aggregate = self._repo.statistics(
+            sensor_id,
+            normalized_from,
+            normalized_to,
         )
-        return self._repo.update(reading_id, value, unit)
+        return SensorReadingStatistics(
+            sensor_id=sensor.id,
+            unit=sensor.unit,
+            from_timestamp=normalized_from,
+            to_timestamp=normalized_to,
+            count=aggregate.count,
+            min_value=aggregate.min_value,
+            max_value=aggregate.max_value,
+            average_value=aggregate.average_value,
+        )
 
-    def delete(self, reading_id: int) -> bool:
-        return self._repo.delete(reading_id)
+    def _normalize_date_range(
+        self,
+        from_date: datetime | None,
+        to_date: datetime | None,
+    ) -> tuple[datetime | None, datetime | None]:
+        normalized_from = (
+            self._normalize_utc_timestamp(from_date)
+            if from_date is not None
+            else None
+        )
+        normalized_to = (
+            self._normalize_utc_timestamp(to_date) if to_date is not None else None
+        )
+        if normalized_from is not None and normalized_to is not None:
+            if normalized_from > normalized_to:
+                raise InvalidDateRangeError(
+                    "El parámetro 'from' no puede ser posterior a 'to'"
+                )
+        return normalized_from, normalized_to
 
 
 class InvalidDateRangeError(ValueError):
     """Indica un intervalo de consulta cronológicamente inválido."""
+
+
+class InvalidTimestampError(ValueError):
+    """Indica que un timestamp no incluye zona horaria."""
 
 
 class ReadingConflictError(Exception):

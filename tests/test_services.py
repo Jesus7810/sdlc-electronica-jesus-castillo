@@ -2,9 +2,10 @@ from datetime import UTC, datetime
 
 import pytest
 
+from app.domain import Anomaly
 from app.models import ReadingModel, SensorModel
 from app.services import (
-    InvalidDateRangeError,
+    InvalidTimestampError,
     ReadingRepository,
     ReadingService,
     SensorRepository,
@@ -27,7 +28,7 @@ class FakeReadingRepository:
             sensor_id=sensor_id,
             value=value,
             unit=unit,
-            timestamp=timestamp or datetime.now(),
+            timestamp=timestamp or datetime.now(UTC),
         )
         self._readings.append(reading)
         return reading
@@ -83,55 +84,38 @@ class FakeReadingRepository:
             None,
         )
 
-    def update(
-        self,
-        reading_id: int,
-        value: float | None,
-        unit: str | None,
-    ) -> ReadingModel | None:
-        reading = self.get_by_id(reading_id)
-
-        if reading is None:
-            return None
-
-        if value is not None:
-            reading.value = value
-
-        if unit is not None:
-            reading.unit = unit
-
-        return reading
-
-    def delete(self, reading_id: int) -> bool:
-        reading = self.get_by_id(reading_id)
-
-        if reading is None:
-            return False
-
-        self._readings.remove(reading)
-        return True
-
-
 class FakeSensorRepository:
     def __init__(self) -> None:
         self._sensors = {
             "TEMP-01": SensorModel(
                 id="TEMP-01",
                 name="Temperatura",
+                location="Laboratorio A",
                 type="temperature",
                 unit="C",
                 min_value=-273.15,
+                low_critical_threshold=-100.0,
+                low_warning_threshold=0.0,
+                high_warning_threshold=30.0,
+                high_critical_threshold=50.0,
                 max_value=200.0,
-                threshold=30.0,
+                is_active=True,
+                deactivated_at=None,
             ),
             "HUM-01": SensorModel(
                 id="HUM-01",
                 name="Humedad",
+                location="Laboratorio B",
                 type="humidity",
                 unit="%",
                 min_value=0.0,
+                low_critical_threshold=10.0,
+                low_warning_threshold=20.0,
+                high_warning_threshold=80.0,
+                high_critical_threshold=90.0,
                 max_value=100.0,
-                threshold=80.0,
+                is_active=True,
+                deactivated_at=None,
             ),
         }
 
@@ -139,8 +123,12 @@ class FakeSensorRepository:
         self._sensors[sensor.id] = sensor
         return sensor
 
-    def list(self) -> list[SensorModel]:
-        return list(self._sensors.values())
+    def list(self, include_inactive: bool = False) -> list[SensorModel]:
+        return [
+            sensor
+            for sensor in self._sensors.values()
+            if include_inactive or sensor.is_active
+        ]
 
     def get_by_id(self, sensor_id: str) -> SensorModel | None:
         return self._sensors.get(sensor_id)
@@ -150,20 +138,16 @@ class FakeSensorRepository:
             setattr(sensor, field, value)
         return sensor
 
-    def delete(self, sensor: SensorModel) -> None:
-        del self._sensors[sensor.id]
-
-
 class FakeAlertStrategy:
     def __init__(self) -> None:
-        self.handled_anomalies: list[tuple[ReadingModel, float]] = []
+        self.handled_anomalies: list[tuple[ReadingModel, Anomaly]] = []
 
     def handle_anomaly(
         self,
         reading: ReadingModel,
-        threshold: float,
+        anomaly: Anomaly,
     ) -> None:
-        self.handled_anomalies.append((reading, threshold))
+        self.handled_anomalies.append((reading, anomaly))
 
 
 def make_service(repo: ReadingRepository) -> ReadingService:
@@ -215,21 +199,6 @@ def test_record_allows_humidity_below_absolute_zero_within_range() -> None:
     assert reading.value == -274.0
 
 
-def test_record_handles_anomaly_when_value_exceeds_sensor_threshold() -> None:
-    reading_repo: ReadingRepository = FakeReadingRepository()
-    sensor_repo: SensorRepository = FakeSensorRepository()
-    sensor = sensor_repo.get_by_id("TEMP-01")
-    assert sensor is not None
-    sensor.threshold = 30.0
-
-    alert_strategy = FakeAlertStrategy()
-    service = ReadingService(reading_repo, sensor_repo, alert_strategy)
-
-    reading = service.record("TEMP-01", 31.0, "C")
-
-    assert alert_strategy.handled_anomalies == [(reading, 30.0)]
-
-
 def test_get_returns_existing_reading() -> None:
     repo: ReadingRepository = FakeReadingRepository()
     service = make_service(repo)
@@ -250,71 +219,6 @@ def test_get_returns_none_when_reading_does_not_exist() -> None:
     assert reading is None
 
 
-def test_update_changes_only_provided_fields() -> None:
-    repo: ReadingRepository = FakeReadingRepository()
-    service = make_service(repo)
-    created = service.record("TEMP-01", 25.5, "C")
-
-    updated = service.update(
-        reading_id=created.id,
-        value=30.0,
-        unit=None,
-    )
-
-    assert updated is not None
-    assert updated.value == 30.0
-    assert updated.unit == "C"
-
-
-def test_update_returns_none_when_reading_does_not_exist() -> None:
-    repo: ReadingRepository = FakeReadingRepository()
-    service = make_service(repo)
-
-    updated = service.update(
-        reading_id=999,
-        value=30.0,
-        unit=None,
-    )
-
-    assert updated is None
-
-
-def test_update_rejects_temperature_below_absolute_zero() -> None:
-    repo: ReadingRepository = FakeReadingRepository()
-    service = make_service(repo)
-    created = service.record("TEMP-01", 25.5, "C")
-
-    with pytest.raises(
-        ValueError,
-        match="Temperatura por debajo del cero absoluto",
-    ):
-        service.update(
-            reading_id=created.id,
-            value=-274.0,
-            unit=None,
-        )
-
-
-def test_delete_removes_existing_reading() -> None:
-    repo: ReadingRepository = FakeReadingRepository()
-    service = make_service(repo)
-    created = service.record("TEMP-01", 25.5, "C")
-
-    deleted = service.delete(created.id)
-
-    assert deleted is True
-    assert service.get(created.id) is None
-
-
-def test_delete_returns_false_when_reading_does_not_exist() -> None:
-    repo: ReadingRepository = FakeReadingRepository()
-    service = make_service(repo)
-
-    deleted = service.delete(999)
-
-    assert deleted is False
-
-
 def test_list_returns_paginated_readings() -> None:
     repo: ReadingRepository = FakeReadingRepository()
     service = make_service(repo)
@@ -332,7 +236,7 @@ def test_list_returns_paginated_readings() -> None:
     assert readings == [second, third]
 
 
-def test_list_rejects_inverted_date_range() -> None:
+def test_list_rejects_inverted_utc_date_range() -> None:
     service = make_service(FakeReadingRepository())
 
     with pytest.raises(ValueError, match="'from'.*posterior"):
@@ -340,19 +244,19 @@ def test_list_rejects_inverted_date_range() -> None:
             sensor_id="TEMP-01",
             offset=0,
             limit=50,
-            from_date=datetime(2026, 2, 1),
-            to_date=datetime(2026, 1, 1),
+            from_date=datetime(2026, 2, 1, tzinfo=UTC),
+            to_date=datetime(2026, 1, 1, tzinfo=UTC),
         )
 
 
-def test_list_rejects_mixed_naive_and_aware_dates() -> None:
+def test_list_rejects_naive_date_filter() -> None:
     service = make_service(FakeReadingRepository())
 
-    with pytest.raises(InvalidDateRangeError, match="misma zona horaria"):
+    with pytest.raises(InvalidTimestampError, match="zona horaria"):
         service.list(
             sensor_id="TEMP-01",
             offset=0,
             limit=50,
-            from_date=datetime(2026, 1, 1, tzinfo=UTC),
-            to_date=datetime(2026, 1, 2),
+            from_date=datetime(2026, 1, 1),
+            to_date=None,
         )

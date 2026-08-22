@@ -1,21 +1,116 @@
+from dataclasses import dataclass
+from datetime import datetime
+from enum import StrEnum
 from typing import Literal
 
 SensorType = Literal["temperature", "humidity"]
 VALID_UNITS: dict[str, str] = {"temperature": "C", "humidity": "%"}
 
 
+class AlertCondition(StrEnum):
+    LOW = "low"
+    HIGH = "high"
+
+
+class AlertSeverity(StrEnum):
+    WARNING = "WARNING"
+    CRITICAL = "CRITICAL"
+
+
+class AlertStatus(StrEnum):
+    OPEN = "open"
+    ACKNOWLEDGED = "acknowledged"
+    RESOLVED = "resolved"
+
+
+@dataclass(frozen=True)
+class Anomaly:
+    condition: AlertCondition
+    severity: AlertSeverity
+    threshold: float
+
+
+@dataclass(frozen=True)
+class ReadingAggregate:
+    count: int
+    min_value: float | None
+    max_value: float | None
+    average_value: float | None
+
+
+@dataclass(frozen=True)
+class SensorReadingStatistics:
+    sensor_id: str
+    unit: str
+    from_timestamp: datetime | None
+    to_timestamp: datetime | None
+    count: int
+    min_value: float | None
+    max_value: float | None
+    average_value: float | None
+
+
+@dataclass(frozen=True)
+class OperationalMetrics:
+    active_sensors: int
+    registered_readings: int
+    unresolved_alerts: int
+
+
+def classify_anomaly(
+    value: float,
+    low_critical_threshold: float,
+    low_warning_threshold: float,
+    high_warning_threshold: float,
+    high_critical_threshold: float,
+) -> Anomaly | None:
+    if value <= low_critical_threshold:
+        return Anomaly(
+            AlertCondition.LOW,
+            AlertSeverity.CRITICAL,
+            low_critical_threshold,
+        )
+    if value < low_warning_threshold:
+        return Anomaly(
+            AlertCondition.LOW,
+            AlertSeverity.WARNING,
+            low_warning_threshold,
+        )
+    if value >= high_critical_threshold:
+        return Anomaly(
+            AlertCondition.HIGH,
+            AlertSeverity.CRITICAL,
+            high_critical_threshold,
+        )
+    if value > high_warning_threshold:
+        return Anomaly(
+            AlertCondition.HIGH,
+            AlertSeverity.WARNING,
+            high_warning_threshold,
+        )
+    return None
+
+
 def validate_sensor_configuration(
     sensor_type: str,
     unit: str,
     min_value: float,
+    low_critical_threshold: float,
+    low_warning_threshold: float,
+    high_warning_threshold: float,
+    high_critical_threshold: float,
     max_value: float,
-    threshold: float,
 ) -> None:
-    if min_value >= max_value:
-        raise DomainValidationError("min_value debe ser menor que max_value")
-    if not min_value <= threshold < max_value:
+    if not (
+        min_value
+        < low_critical_threshold
+        < low_warning_threshold
+        < high_warning_threshold
+        < high_critical_threshold
+        < max_value
+    ):
         raise DomainValidationError(
-            "threshold debe estar dentro del rango operativo del sensor"
+            "Los lÃ­mites fÃ­sicos y umbrales deben mantener un orden estricto"
         )
     if VALID_UNITS.get(sensor_type) != unit:
         raise DomainValidationError("El tipo y la unidad no son compatibles")
@@ -31,3 +126,7 @@ class ResourceNotFoundError(Exception):
 
 class ResourceConflictError(Exception):
     """Indica un conflicto con el estado persistido."""
+
+
+class DatabaseUnavailableError(Exception):
+    """Indica una indisponibilidad de infraestructura de base de datos."""

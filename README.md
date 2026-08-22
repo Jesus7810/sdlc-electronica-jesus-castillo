@@ -2,114 +2,71 @@
 
 # SensorHub API
 
-Proyecto desarrollado durante el programa **EDSIA — De Electrónica a Desarrollo de Software con IA**.
+SensorHub es una API REST de telemetría IoT desarrollada para el proyecto final
+de Semana 6 de EDSIA. Permite configurar sensores con límites físicos y
+umbrales operativos, registrar lecturas trazables, gestionar alertas y consultar
+estadísticas, con una ejecución reproducible en SQLite o PostgreSQL.
 
-SensorHub es una API REST para administrar sensores y sus lecturas. Está construida con FastAPI y SQLAlchemy, utiliza
-SQLite en el entorno local y PostgreSQL mediante Docker Compose y en producción, aplicando arquitectura por capas,
-inyección de dependencias, principios SOLID y pruebas automatizadas.
+## Capacidades actuales
 
-## Objetivo del proyecto
-
-El objetivo es construir progresivamente un sistema de monitoreo de sensores con prácticas profesionales de desarrollo de software:
-
-- Código claro y mantenible.
-- Separación de responsabilidades.
-- Persistencia de datos.
-- API REST.
-- Desarrollo guiado por pruebas.
-- Control de calidad automatizado.
-- Uso profesional de Git y GitHub.
+- Configuración v2 de sensores con ubicación, límites físicos y cuatro umbrales
+  operativos estrictamente ordenados.
+- Desactivación lógica y reactivación idempotente de sensores, sin perder su
+  historial.
+- Registro de lecturas inmutables, con timestamps con zona horaria normalizados
+  a UTC y unicidad por sensor e instante.
+- Clasificación de anomalías `WARNING` y `CRITICAL` para condiciones `low` y
+  `high`.
+- Apertura, actualización, escalamiento, reconocimiento y resolución manual de
+  alertas trazables.
+- Consulta de lecturas paginada y por rango temporal, además de estadísticas
+  agregadas por sensor.
+- Liveness, readiness y métricas operativas en formato Prometheus.
+- Migraciones Alembic, pruebas automatizadas, análisis estático, Docker Compose
+  y validación de migraciones sobre PostgreSQL en CI.
 
 ## Arquitectura
 
-La aplicación utiliza una arquitectura por capas:
+La aplicación aplica la arquitectura por capas definida en el
+[ADR 0001](docs/adr/0001-arquitectura-en-capas.md). Los routers se ocupan del
+contrato HTTP; los servicios coordinan los casos de uso; las reglas puras del
+dominio no dependen de FastAPI ni de SQLAlchemy; y los repositorios encapsulan
+la persistencia.
 
-```text
-Cliente HTTP
-     ↓
-Routers de FastAPI
-     ↓
-SensorService / ReadingService
-     ↓
-SensorRepository / ReadingRepository
-     ↓
-Repositorios SQLAlchemy
-     ↓
-Base de datos SQLite o PostgreSQL
+```mermaid
+flowchart LR
+    Client[Cliente HTTP] --> Router[FastAPI routers]
+    Router --> Schemas[Pydantic schemas]
+    Router --> Services[Servicios]
+    Services --> Domain[Reglas de dominio puras]
+    Services --> Ports[Protocolos de repositorio]
+    Ports --> Repositories[Repositorios SQLAlchemy]
+    Repositories --> Models[Modelos ORM]
+    Models --> Database[(SQLite / PostgreSQL)]
+    Alembic[Alembic] --> Database
 ```
 
-### Responsabilidades
-
-- **Endpoints:** reciben solicitudes HTTP, validan el formato de entrada y generan respuestas HTTP.
-- **Servicio:** contiene las reglas de negocio y coordina las operaciones.
-- **Contrato de repositorio:** define las operaciones de persistencia que necesita el servicio.
-- **Repositorio SQLAlchemy:** implementa el contrato y realiza las operaciones sobre la base de datos.
-- **Modelos:** representan las entidades almacenadas en la base de datos configurada.
-
-Esta separación permite cambiar la tecnología de almacenamiento sin modificar las reglas de negocio.
-
-## Estructura principal
-
-```text
-app/
-├── __init__.py
-├── database.py
-├── main.py
-├── models.py
-├── schemas.py
-├── repositories.py
-├── routers.py
-└── services.py
-
-tests/
-├── test_main.py
-└── test_services.py
-```
-
-## Tecnologías utilizadas
-
-- Python 3.12
-- FastAPI
-- Pydantic
-- SQLAlchemy 2.x
-- SQLite
-- PostgreSQL 16
-- Alembic
-- Docker y Docker Compose
-- Uvicorn
-- pytest
-- pytest-cov
-- Ruff
-- mypy
-- Git y GitHub
+La política funcional de sensores, lecturas y alertas se documenta en el
+[ADR 0002](docs/adr/0002-ciclo-de-vida-de-sensores-y-alertas.md). La separación
+entre liveness, readiness y métricas se documenta en el
+[ADR 0003](docs/adr/0003-observabilidad-liveness-readiness-y-metricas.md).
 
 ## Requisitos
 
-Para ejecutar el proyecto se necesita:
+- Python 3.12.
+- Docker Engine o Docker Desktop con Docker Compose para ejecutar PostgreSQL en
+  contenedores.
 
-- Python 3.12 o una versión compatible.
-- Git.
-- Un entorno virtual de Python.
-- Docker Desktop o Docker Engine con Docker Compose, para ejecutar la aplicación con PostgreSQL.
+## Ejecución local con SQLite
 
-## Instalación
-
-### 1. Clonar el repositorio
-
-```bash
-git clone https://github.com/Jesus7810/sdlc-electronica-jesus-castillo.git
-cd sdlc-electronica-jesus-castillo
-```
-
-### 2. Crear un entorno virtual
+La aplicación usa `sqlite:///sensorhub.db` si `DATABASE_URL` no está definida.
+Para una instalación local nueva:
 
 ```bash
 python -m venv .venv
 ```
 
-### 3. Activar el entorno virtual
-
-En Windows PowerShell:
+Activa el entorno antes de continuar:
 
 ```powershell
 .venv\Scripts\Activate.ps1
@@ -121,412 +78,267 @@ En Linux o macOS:
 source .venv/bin/activate
 ```
 
-### 4. Instalar las dependencias
+Después instala dependencias, aplica el esquema e inicia la API:
 
 ```bash
-python -m pip install -r requirements.txt
-```
-
-## Ejecución con Docker Compose
-
-Este es el método recomendado para levantar la API junto con PostgreSQL.
-
-### 1. Configurar las variables de entorno
-
-Crear un archivo `.env` a partir del archivo `.env.example` incluido en el repositorio.
-
-En Windows PowerShell:
-
-```powershell
-Copy-Item .env.example .env
-```
-
-En Linux o macOS:
-
-```bash
-cp .env.example .env
-```
-
-El archivo `.env` contiene la configuración local de PostgreSQL y no debe incluir credenciales de producción.
-
-### 2. Construir e iniciar los servicios
-
-```bash
-docker compose up --build
-```
-
-Docker Compose iniciará:
-
-- La API de SensorHub en `http://localhost:8000`.
-- PostgreSQL 16 como servicio de base de datos.
-- Las migraciones de Alembic antes de iniciar la API.
-
-Comprobar el estado de la API:
-
-```text
-http://localhost:8000/health
-```
-
-Abrir la documentación interactiva:
-
-```text
-http://localhost:8000/docs
-```
-
-### 3. Detener los servicios
-
-```bash
-docker compose down
-```
-
-Para detener los servicios y eliminar también el volumen local de PostgreSQL:
-
-```bash
-docker compose down -v
-```
-
-> **Advertencia:** la opción `-v` elimina los datos almacenados en la base de datos local. Debe utilizarse únicamente cuando se quiera reiniciar completamente PostgreSQL.
-
-## Ejecución
-
-Iniciar el servidor de desarrollo:
-
-```bash
+python -m pip install --require-hashes -r requirements.txt
+python -m alembic upgrade head
 python -m uvicorn app.main:app --reload
 ```
 
-La API estará disponible en:
+La API queda disponible en `http://127.0.0.1:8000`; la documentación interactiva
+está en `http://127.0.0.1:8000/docs`.
+
+Las dependencias directas se mantienen en `requirements.in`. El archivo
+`requirements.txt` es el lock generado con versiones exactas y hashes; se
+actualiza de forma deliberada en Python 3.12 y es el único archivo que deben
+instalar Docker, CI y los entornos locales.
+
+> **Advertencia de migración:** las migraciones de configuración v2 y ciclo de
+> vida se diseñaron para una base histórica vacía. No ejecutes `alembic upgrade
+> head` sobre una base previa sin respaldo y un plan explícito de migración de
+> datos.
+
+Las pruebas no utilizan `sensorhub.db`: usan una base SQLite temporal aislada.
+
+## Ejecución con Docker Compose
+
+La definición de [docker-compose.yml](docker-compose.yml) separa claramente el
+arranque de PostgreSQL, las migraciones y la API:
 
 ```text
-http://127.0.0.1:8000
+db (healthy) → migrate (alembic upgrade head, exit 0) → api (Uvicorn, healthy)
 ```
 
-FastAPI genera documentación interactiva automáticamente:
+1. Crea un archivo local `.env` a partir de
+   [.env.example](.env.example) y sustituye los valores de ejemplo por
+   credenciales locales. No incluyas credenciales reales ni de producción.
+2. Construye e inicia los servicios:
 
-* Swagger UI: `http://127.0.0.1:8000/docs`
-* ReDoc: `http://127.0.0.1:8000/redoc`
+   ```bash
+   docker compose up --build
+   ```
 
-Antes de iniciar la aplicación, Alembic aplica las migraciones necesarias para mantener actualizado el esquema de la base de datos:
+3. Comprueba el estado de los servicios:
+
+   ```bash
+   docker compose ps
+   ```
+
+   El servicio `migrate` debe haber terminado correctamente y `api` debe estar
+   healthy. La API se expone en `http://localhost:8000`.
+
+4. Detén únicamente los contenedores del proyecto, preservando el volumen de
+   PostgreSQL:
+
+   ```bash
+   docker compose down
+   ```
+
+El servicio `migrate` usa la misma imagen local que `api`, no expone puertos y
+ejecuta solo `alembic upgrade head`. La API depende de que finalice con éxito y
+ejecuta solamente Uvicorn. Consulta también el [Dockerfile](Dockerfile) y la
+configuración de [Alembic](alembic.ini).
+
+## Migraciones
+
+Alembic mantiene el esquema reproducible tanto para SQLite como para PostgreSQL.
+Los comandos habituales son:
 
 ```bash
-alembic upgrade head
+python -m alembic upgrade head
+python -m alembic current --check-heads
 ```
 
-## Despliegue en producción
+Antes de una migración sobre una base con datos, revisa la cadena de revisiones
+y realiza un respaldo. La advertencia sobre datos históricos indicada arriba es
+especialmente importante para esquemas anteriores a SensorHub v2.
 
-SensorHub está desplegada en Render mediante Docker y utiliza PostgreSQL como base de datos de producción.
+## Endpoints clave
 
-* API pública: https://sensorhub-api-0dn6.onrender.com
-* Documentación Swagger: https://sensorhub-api-0dn6.onrender.com/docs
-* Comprobación de estado: https://sensorhub-api-0dn6.onrender.com/health
+La especificación completa está disponible en `/docs`. Estas son las rutas de
+uso principal:
 
-La infraestructura está definida en `render.yaml`. Cada cambio integrado en la rama `main` inicia automáticamente un nuevo despliegue en Render.
+| Método | Ruta | Comportamiento |
+|---|---|---|
+| `POST` | `/sensors` | Crea un sensor con configuración v2. |
+| `GET` | `/sensors?include_inactive=false` | Lista sensores activos por defecto. |
+| `GET`, `PATCH` | `/sensors/{sensor_id}` | Consulta o actualiza la configuración del sensor. |
+| `POST` | `/sensors/{sensor_id}/deactivate` | Desactiva el sensor de forma idempotente. |
+| `POST` | `/sensors/{sensor_id}/activate` | Reactiva el sensor de forma idempotente. |
+| `POST` | `/sensors/{sensor_id}/readings` | Registra una lectura. |
+| `GET` | `/sensors/{sensor_id}/readings` | Consulta lecturas con paginación y filtros `from`/`to`. |
+| `GET` | `/sensors/{sensor_id}/readings/statistics` | Obtiene mínimo, máximo, promedio y cantidad. |
+| `GET` | `/readings/{reading_id}` | Consulta una lectura inmutable. |
+| `GET` | `/alerts` | Lista alertas no resueltas por defecto; admite filtros y paginación. |
+| `GET` | `/alerts/{alert_id}` | Consulta el detalle de una alerta. |
+| `POST` | `/alerts/{alert_id}/acknowledge` | Transición de `open` a `acknowledged`. |
+| `POST` | `/alerts/{alert_id}/resolve` | Resuelve una alerta `open` o `acknowledged`. |
+| `GET` | `/health` | Liveness del proceso HTTP, sin consultar la base de datos. |
+| `GET` | `/ready` | Readiness: comprueba la disponibilidad de la base de datos. |
+| `GET` | `/metrics` | Métricas Prometheus de solo lectura. |
 
-Antes de iniciar Uvicorn, el contenedor ejecuta `alembic upgrade head` para aplicar las migraciones y preparar el esquema de PostgreSQL.
+Las rutas heredadas `POST /readings` y `GET /readings` se mantienen por
+compatibilidad. No existen rutas públicas para borrar sensores ni para editar o
+borrar lecturas; los métodos no admitidos devuelven `405` cuando corresponde.
 
-El plan gratuito puede suspender el servicio después de un periodo de inactividad, por lo que la primera solicitud puede tardar aproximadamente un minuto en responder.
+## Ejemplos HTTP
 
-
-## Endpoints
-
-| Método | Ruta | Descripción | Respuesta exitosa |
-|---|---|---|---|
-| `GET` | `/health` | Comprueba el estado de la API | `200 OK` |
-| `POST` | `/sensors` | Crea un sensor | `201 Created` |
-| `GET` | `/sensors` | Lista los sensores | `200 OK` |
-| `GET` | `/sensors/{sensor_id}` | Consulta un sensor | `200 OK` |
-| `PATCH` | `/sensors/{sensor_id}` | Actualiza parcialmente un sensor | `200 OK` |
-| `DELETE` | `/sensors/{sensor_id}` | Elimina un sensor | `204 No Content` |
-| `POST` | `/sensors/{sensor_id}/readings` | Registra una lectura (canónica) | `201 Created` |
-| `GET` | `/sensors/{sensor_id}/readings` | Lista, filtra y pagina (canónica) | `200 OK` |
-| `POST` | `/readings` | Ruta anterior conservada por compatibilidad | `201 Created` |
-| `GET` | `/readings` | Ruta anterior conservada por compatibilidad | `200 OK` |
-| `GET` | `/readings/{reading_id}` | Obtiene una lectura por ID | `200 OK` |
-| `PATCH` | `/readings/{reading_id}` | Actualiza parcialmente una lectura | `200 OK` |
-| `DELETE` | `/readings/{reading_id}` | Elimina una lectura | `204 No Content` |
-
-Cuando una lectura no existe, los endpoints correspondientes devuelven:
-
-```json
-{
-  "detail": "Lectura no encontrada"
-}
-```
-
-con el código HTTP `404 Not Found`.
-
-## Sensores y rango operativo
-
-Antes de registrar lecturas se crea el sensor:
+Crear un sensor de temperatura con configuración v2:
 
 ```http
 POST /sensors
 Content-Type: application/json
-```
 
-```json
 {
   "id": "TEMP-01",
   "name": "Temperatura del laboratorio",
+  "location": "Laboratorio de electrónica",
   "type": "temperature",
   "unit": "C",
   "min_value": -40,
-  "max_value": 125
+  "low_critical_threshold": -20,
+  "low_warning_threshold": -10,
+  "high_warning_threshold": 30,
+  "high_critical_threshold": 40,
+  "max_value": 50
 }
 ```
 
-Los tipos iniciales y sus unidades son deliberadamente mínimos:
-
-| Tipo | Unidad aceptada |
-|---|---|
-| `temperature` | `C` |
-| `humidity` | `%` |
-
-`min_value` y `max_value` son una decisión adicional del proyecto: representan
-el rango físico u operativo configurado para aceptar una medición y no un umbral
-de anomalía. Debe cumplirse `min_value < max_value`. No se incluyen simuladores,
-alertas ni detección de anomalías en este integrador.
-
-La actualización de sensores es parcial. Por ejemplo:
-
-```json
-{
-  "name": "Cámara fría",
-  "min_value": -80
-}
-```
-
-Si el sensor todavía no tiene lecturas, su tipo y unidad pueden cambiar juntos
-si la configuración final es compatible. Cuando ya tiene historial, un cambio
-efectivo de tipo o unidad devuelve `409 Conflict`; reenviar el valor actual sí
-es válido. Los límites pueden cambiar únicamente cuando todas las lecturas
-existentes siguen dentro del nuevo intervalo inclusivo. El historial nunca se
-modifica ni elimina para hacer posible un PATCH.
-
-## Crear una lectura
-
-Solicitud:
+Registrar una lectura con timestamp UTC explícito:
 
 ```http
 POST /sensors/TEMP-01/readings
 Content-Type: application/json
-```
 
-Cuerpo:
-
-```json
 {
-  "value": 25.5,
+  "value": 35,
   "unit": "C",
-  "timestamp": "2026-07-30T12:00:00"
+  "timestamp": "2026-08-24T12:00:00Z"
 }
 ```
 
-Ejemplo de respuesta:
-
-```json
-{
-  "sensor_id": "TEMP-01",
-  "value": 25.5,
-  "unit": "C",
-  "id": 1,
-  "timestamp": "2026-07-30T12:00:00"
-}
-```
-
-El `sensor_id` se obtiene exclusivamente de la ruta. `timestamp` es opcional y,
-si se omite, el servicio lo genera automáticamente. La combinación de sensor y fecha
-es única: intentar registrar dos lecturas del mismo sensor en el mismo instante
-devuelve `409 Conflict`; repetir un valor en fechas distintas es válido.
-
-Antes de guardar, `ReadingService` comprueba que el sensor exista, que la unidad
-coincida y que `min_value <= value <= max_value`. Una lectura rechazada no llega
-al repositorio y, por tanto, no se persiste.
-
-## Listar lecturas
+Consultar estadísticas en un rango inclusivo UTC:
 
 ```http
-GET /sensors/TEMP-01/readings
+GET /sensors/TEMP-01/readings/statistics?from=2026-08-24T00:00:00Z&to=2026-08-24T23:59:59Z
 ```
 
-El endpoint admite los siguientes parámetros de consulta:
-
-| Parámetro | Descripción | Valor predeterminado |
-|---|---|---|
-| `limit` | Cantidad máxima de resultados, entre 1 y 100 | `50` |
-| `offset` | Cantidad de registros que se omiten | `0` |
-| `from` | Fecha inicial inclusiva en formato ISO 8601 | Sin límite |
-| `to` | Fecha final inclusiva en formato ISO 8601 | Sin límite |
-
-Ejemplo:
+Reconocer o resolver una alerta existente:
 
 ```http
-GET /sensors/TEMP-01/readings?from=2026-07-01T00:00:00&to=2026-07-31T23:59:59&offset=0&limit=5
+POST /alerts/1/acknowledge
+POST /alerts/1/resolve
 ```
 
-Si `from` es posterior a `to`, la API devuelve `400 Bad Request`.
-Fechas mal formadas, `limit` fuera de 1–100 u `offset` negativo devuelven
-`422 Unprocessable Entity`.
+Consultar observabilidad:
 
-## Consultar una lectura
-
-```http
-GET /readings/1
+```bash
+curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8000/ready
+curl http://127.0.0.1:8000/metrics
 ```
 
-Devuelve la lectura correspondiente al identificador indicado o una respuesta `404` si no existe.
+## Reglas de dominio principales
 
-## Actualizar una lectura
+### Sensores y umbrales
 
-La actualización es parcial, por lo que solamente se envían los campos que se desean modificar:
-
-```http
-PATCH /readings/1
-Content-Type: application/json
-```
-
-```json
-{
-  "value": 30.0
-}
-```
-
-Los campos editables son:
-
-- `value`
-- `unit`
-
-El campo `sensor_id` no se modifica mediante este endpoint.
-
-Si el dato tiene un formato válido, pero viola una regla de negocio, la API devuelve `400 Bad Request`. Por ejemplo, una temperatura inferior al cero absoluto.
-
-## Códigos de error
-
-- `400 Bad Request`: regla de negocio o intervalo de fechas inválido.
-- `404 Not Found`: la lectura solicitada no existe.
-- `409 Conflict`: ya existe una lectura del mismo sensor con igual `timestamp`.
-- `409 Conflict`: también se usa al crear un sensor con un ID existente.
-- `422 Unprocessable Entity`: cuerpo, fecha o paginación con formato inválido.
-
-## Eliminar una lectura
-
-```http
-DELETE /readings/1
-```
-
-Si la lectura se elimina correctamente, la API devuelve `204 No Content`. Si el identificador no existe, devuelve `404 Not Found`.
-
-En producción, esta operación debe protegerse mediante autorización,
-deshabilitarse o sustituirse por borrado lógico de acuerdo con las reglas y
-requisitos de auditoría del sistema.
-
-## Base de datos
-
-El motor de persistencia se selecciona mediante la variable de entorno `DATABASE_URL`:
-
-- Sin configurar la variable, la aplicación utiliza SQLite y crea localmente `sensorhub.db`.
-- Docker Compose utiliza PostgreSQL 16 en el servicio `db`.
-- Render proporciona una instancia PostgreSQL e inyecta su cadena de conexión mediante `DATABASE_URL`.
-
-Cuando el motor es SQLite, cada conexión activa `PRAGMA foreign_keys=ON`. La clave foránea de lecturas usa
-`ON DELETE CASCADE`, por lo que eliminar un sensor elimina sus lecturas. Una base
-creada con una versión anterior del modelo requiere una migración Alembic para
-incorporar físicamente esta restricción; `create_all` no altera tablas existentes.
-
-La configuración se encuentra en `app/database.py` y la base local se almacena en:
+Cada sensor tiene `location`, límites físicos y cuatro umbrales operativos. Debe
+cumplirse esta cadena estricta:
 
 ```text
-sensorhub.db
+min_value < low_critical_threshold < low_warning_threshold < high_warning_threshold < high_critical_threshold < max_value
 ```
 
-Las pruebas no utilizan esta base de datos real. En su lugar, crean una base SQLite temporal en memoria para mantener cada prueba aislada y evitar modificar los datos locales.
+Los límites físicos determinan si una lectura es aceptable. Una lectura fuera de
+`min_value` y `max_value` se rechaza: no se persiste ni genera una alerta. Los
+umbrales operativos clasifican las lecturas físicamente válidas como normales,
+`WARNING` o `CRITICAL`.
 
-## Pruebas automatizadas
+### Lecturas y UTC
 
-El proyecto contiene:
+Las lecturas son inmutables. Un timestamp explícito debe incluir offset o zona
+horaria; la API lo normaliza a UTC antes de persistirlo, filtrarlo y devolverlo.
+Si se omite, el sistema genera el timestamp en UTC. Los filtros temporales
+`from` y `to` también requieren zona horaria y son inclusivos.
 
-- Pruebas unitarias de la capa de servicio.
-- Pruebas del repositorio.
-- Pruebas de integración de la API.
-- Pruebas de respuestas exitosas.
-- Pruebas de errores `400`, `404`, `409` y `422`.
-- Pruebas de filtrado y paginación.
-- Pruebas de actualización y eliminación.
+La combinación `(sensor_id, timestamp)` es única para el instante UTC
+normalizado. Un intento duplicado devuelve `409 Conflict`.
 
-Ejecutar todas las pruebas:
+### Ciclo de vida de sensores
+
+Un sensor nuevo está activo. Desactivarlo conserva sus lecturas y alertas,
+elimina el sensor de los listados normales e impide nuevas lecturas con `409`.
+Las operaciones de activar y desactivar son idempotentes. Las estadísticas y la
+consulta individual conservan acceso al historial de sensores inactivos.
+
+### Alertas
+
+Una alerta posee condición `low` o `high`, severidad `WARNING` o `CRITICAL` y
+estado `open`, `acknowledged` o `resolved`. Las alertas `open` y
+`acknowledged` no están resueltas; solo puede existir una por sensor y condición
+en esos estados. La evidencia de origen y la última evidencia anómala se
+conservan separadamente.
+
+Una alerta se reconoce manualmente y se resuelve manualmente. Una lectura normal
+no la cierra. Una alerta reconocida que escala de `WARNING` a `CRITICAL` vuelve
+a `open` y conserva su primer reconocimiento histórico.
+
+### Estadísticas
+
+`GET /sensors/{sensor_id}/readings/statistics` calcula `count`, mínimo, máximo y
+promedio en la base de datos. Sin lecturas en un rango válido devuelve `200` con
+`count: 0` y agregados `null`; un sensor inactivo conserva acceso a su historial.
+
+## Observabilidad
+
+- `/health` devuelve `200 {"status":"ok"}` si el proceso HTTP está vivo y no
+  depende de la base de datos.
+- `/ready` devuelve `200 {"status":"ready"}` cuando la base está disponible;
+  ante indisponibilidad de infraestructura devuelve `503
+  {"status":"unavailable"}` sin revelar detalles internos.
+- `/metrics` emite Prometheus text format y las gauges
+  `sensorhub_active_sensors`, `sensorhub_registered_readings` y
+  `sensorhub_unresolved_alerts`. Esta última incluye alertas `open` y
+  `acknowledged`.
+
+## Calidad y CI
+
+Ejecuta las comprobaciones locales con el intérprete del proyecto:
 
 ```bash
+python -m ruff check .
+python -m mypy app
 python -m pytest -v
 ```
 
-El proyecto exige una cobertura mínima de 80 %.
+La configuración de [GitHub Actions](.github/workflows/ci.yml) contiene dos
+jobs: uno de calidad y pruebas sobre SQLite, y otro que inicia PostgreSQL 16
+limpio, comprueba la conexión y ejecuta `alembic upgrade head` seguido de
+`alembic current --check-heads`. El workflow solo usa credenciales públicas y
+efímeras de CI; no consume `.env` ni secretos de producción.
 
-## Control de calidad
+## Despliegue
 
-### Ruff
+El repositorio contiene configuración de Render en [render.yaml](render.yaml).
+Este documento no afirma que exista una URL pública ni un despliegue activo: ese
+estado debe verificarse en el entorno de Render antes de comunicarlo.
 
-Comprueba el estilo del código, los imports y posibles errores:
+Docker Compose resuelve el orden de migración con un servicio único `migrate`.
+El Dockerfile se mantiene con migración al arranque para la configuración actual
+de Render free, que no dispone de un `preDeployCommand` equivalente. Ese enfoque
+es adecuado solo para una instancia: antes de escalar deben incorporarse un
+release job o un mecanismo de bloqueo de migraciones para evitar carreras.
 
-```bash
-python -m ruff check app tests
-```
+## Trazabilidad de decisiones
 
-### mypy
-
-Realiza la comprobación estática de tipos:
-
-```bash
-python -m mypy app tests
-```
-
-### pytest
-
-Ejecuta las pruebas y calcula la cobertura:
-
-```bash
-python -m pytest -v
-```
-
-Antes de considerar terminado un cambio deben pasar las tres verificaciones.
-
-## Prácticas aplicadas
-
-Durante el desarrollo se han aplicado:
-
-- Arquitectura por capas.
-- Inyección de dependencias.
-- Principio de responsabilidad única.
-- Inversión de dependencias.
-- Patrón repositorio.
-- Capa de servicio.
-- Validación con Pydantic.
-- Persistencia con SQLAlchemy.
-- Pruebas unitarias y de integración.
-- Desarrollo guiado por pruebas.
-- Commits pequeños y descriptivos.
-- Definition of Done con calidad automatizada.
-
-## Estado actual
-
-Actualmente, SensorHub permite:
-
-- Crear, listar, consultar, actualizar y eliminar sensores.
-- Validar compatibilidad entre tipo y unidad.
-- Validar lecturas contra el rango operativo del sensor.
-- Relacionar sensores y lecturas mediante clave foránea.
-- Registrar lecturas.
-- Consultar todas las lecturas.
-- Filtrar lecturas por sensor.
-- Paginar los resultados.
-- Consultar una lectura por ID.
-- Actualizar parcialmente una lectura.
-- Eliminar una lectura.
-- Validar reglas de negocio.
-- Persistir información en SQLite o PostgreSQL según el entorno.
-- Probar la API sin modificar la base de datos real.
+- [ADR 0001 — Arquitectura en capas](docs/adr/0001-arquitectura-en-capas.md)
+- [ADR 0002 — Ciclo de vida de sensores y alertas](docs/adr/0002-ciclo-de-vida-de-sensores-y-alertas.md)
+- [ADR 0003 — Observabilidad: liveness, readiness y métricas](docs/adr/0003-observabilidad-liveness-readiness-y-metricas.md)
+- [AI_LOG.md](AI_LOG.md)
 
 ## Autor
 
 **Jesús Roberto Castillo López**
-
-Estudiante de Ingeniería en Instrumentación Electrónica y participante del programa **EDSIA — De Electrónica a Desarrollo de Software con IA**.
+Estudiante de Ingeniería en Instrumentación Electrónica y participante de EDSIA
+— De Electrónica a Desarrollo de Software con IA.

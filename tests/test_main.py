@@ -48,38 +48,54 @@ def prepare_database() -> Generator[None]:
                 SensorModel(
                     id="TEMP-01",
                     name="Temperatura",
+                    location="Laboratorio A",
                     type="temperature",
                     unit="C",
                     min_value=-273.15,
+                    low_critical_threshold=-100.0,
+                    low_warning_threshold=0.0,
+                    high_warning_threshold=30.0,
+                    high_critical_threshold=50.0,
                     max_value=200.0,
-                    threshold=30.0,
                 ),
                 SensorModel(
                     id="TEMP-PATH",
                     name="Temperatura de ruta",
+                    location="Laboratorio A",
                     type="temperature",
                     unit="C",
                     min_value=-273.15,
+                    low_critical_threshold=-100.0,
+                    low_warning_threshold=0.0,
+                    high_warning_threshold=30.0,
+                    high_critical_threshold=50.0,
                     max_value=200.0,
-                    threshold=30.0,
                 ),
                 SensorModel(
                     id="OTHER",
                     name="Otro sensor",
+                    location="Laboratorio B",
                     type="temperature",
                     unit="C",
                     min_value=-273.15,
+                    low_critical_threshold=-100.0,
+                    low_warning_threshold=0.0,
+                    high_warning_threshold=30.0,
+                    high_critical_threshold=50.0,
                     max_value=200.0,
-                    threshold=30.0,
                 ),
                 SensorModel(
                     id="HUM-01",
                     name="Humedad",
+                    location="Laboratorio C",
                     type="humidity",
                     unit="%",
                     min_value=0.0,
+                    low_critical_threshold=10.0,
+                    low_warning_threshold=20.0,
+                    high_warning_threshold=80.0,
+                    high_critical_threshold=90.0,
                     max_value=100.0,
-                    threshold=80.0,
                 ),
             ]
         )
@@ -125,7 +141,7 @@ def test_get_reading_returns_404_when_not_found() -> None:
     }
 
 
-def test_update_reading_changes_provided_fields() -> None:
+def test_patch_reading_is_not_part_of_the_public_contract() -> None:
     create_response = client.post(
         "/readings",
         json={
@@ -141,25 +157,19 @@ def test_update_reading_changes_provided_fields() -> None:
         json={"value": 30.0},
     )
 
-    assert response.status_code == 200
-    assert response.json()["sensor_id"] == "TEMP-01"
-    assert response.json()["value"] == 30.0
-    assert response.json()["unit"] == "C"
+    assert response.status_code == 405
 
 
-def test_update_reading_returns_404_when_not_found() -> None:
+def test_patch_unknown_reading_is_not_part_of_the_public_contract() -> None:
     response = client.patch(
         "/readings/999",
         json={"value": 30.0},
     )
 
-    assert response.status_code == 404
-    assert response.json() == {
-        "detail": "Lectura no encontrada",
-    }
+    assert response.status_code == 405
 
 
-def test_update_reading_returns_400_for_invalid_temperature() -> None:
+def test_patch_reading_rejects_even_an_invalid_payload_as_method_not_allowed() -> None:
     create_response = client.post(
         "/readings",
         json={
@@ -175,13 +185,10 @@ def test_update_reading_returns_400_for_invalid_temperature() -> None:
         json={"value": -274.0},
     )
 
-    assert response.status_code == 400
-    assert response.json() == {
-        "detail": "Temperatura por debajo del cero absoluto",
-    }
+    assert response.status_code == 405
 
 
-def test_delete_reading_removes_existing_reading() -> None:
+def test_delete_reading_is_not_part_of_the_public_contract() -> None:
     create_response = client.post(
         "/readings",
         json={
@@ -194,21 +201,17 @@ def test_delete_reading_removes_existing_reading() -> None:
 
     delete_response = client.delete(f"/readings/{reading_id}")
 
-    assert delete_response.status_code == 204
-    assert delete_response.content == b""
+    assert delete_response.status_code == 405
 
     get_response = client.get(f"/readings/{reading_id}")
 
-    assert get_response.status_code == 404
+    assert get_response.status_code == 200
 
 
-def test_delete_reading_returns_404_when_not_found() -> None:
+def test_delete_unknown_reading_is_not_part_of_the_public_contract() -> None:
     response = client.delete("/readings/999")
 
-    assert response.status_code == 404
-    assert response.json() == {
-        "detail": "Lectura no encontrada",
-    }
+    assert response.status_code == 405
 
 
 def create_nested(
@@ -223,7 +226,7 @@ def create_nested(
 
 
 def test_nested_create_uses_sensor_id_from_path() -> None:
-    response = create_nested("TEMP-PATH", 21.5, "2026-07-01T10:00:00")
+    response = create_nested("TEMP-PATH", 21.5, "2026-07-01T10:00:00Z")
 
     assert response.status_code == 201
     assert response.json()["sensor_id"] == "TEMP-PATH"
@@ -234,9 +237,9 @@ def test_nested_list_filters_sensor_and_uses_default_pagination() -> None:
         create_nested(
             "TEMP-01",
             float(index),
-            f"2026-07-01T10:{index:02d}:00",
+            f"2026-07-01T10:{index:02d}:00Z",
         )
-    create_nested("OTHER", 99.0, "2026-07-01T11:00:00")
+    create_nested("OTHER", 99.0, "2026-07-01T11:00:00Z")
 
     response = client.get("/sensors/TEMP-01/readings")
 
@@ -250,7 +253,7 @@ def test_nested_list_applies_limit_and_offset() -> None:
         create_nested(
             "TEMP-01",
             float(index),
-            f"2026-07-01T10:0{index}:00",
+            f"2026-07-01T10:0{index}:00Z",
         )
 
     response = client.get(
@@ -274,12 +277,12 @@ def test_nested_list_rejects_invalid_query(params: dict[str, object]) -> None:
 @pytest.mark.parametrize(
     ("params", "expected"),
     [
-        ({"from": "2026-07-02T00:00:00"}, [2.0, 3.0]),
-        ({"to": "2026-07-02T00:00:00"}, [1.0, 2.0]),
+        ({"from": "2026-07-02T00:00:00Z"}, [2.0, 3.0]),
+        ({"to": "2026-07-02T00:00:00Z"}, [1.0, 2.0]),
         (
             {
-                "from": "2026-07-02T00:00:00",
-                "to": "2026-07-02T23:59:59",
+                "from": "2026-07-02T00:00:00Z",
+                "to": "2026-07-02T23:59:59Z",
             },
             [2.0],
         ),
@@ -289,9 +292,9 @@ def test_nested_list_filters_dates(
     params: dict[str, str],
     expected: list[float],
 ) -> None:
-    create_nested("TEMP-01", 1.0, "2026-07-01T00:00:00")
-    create_nested("TEMP-01", 2.0, "2026-07-02T00:00:00")
-    create_nested("TEMP-01", 3.0, "2026-07-03T00:00:00")
+    create_nested("TEMP-01", 1.0, "2026-07-01T00:00:00Z")
+    create_nested("TEMP-01", 2.0, "2026-07-02T00:00:00Z")
+    create_nested("TEMP-01", 3.0, "2026-07-03T00:00:00Z")
 
     response = client.get("/sensors/TEMP-01/readings", params=params)
 
@@ -303,8 +306,8 @@ def test_nested_list_rejects_inverted_date_range() -> None:
     response = client.get(
         "/sensors/TEMP-01/readings",
         params={
-            "from": "2026-07-03T00:00:00",
-            "to": "2026-07-01T00:00:00",
+            "from": "2026-07-03T00:00:00Z",
+            "to": "2026-07-01T00:00:00Z",
         },
     )
 
@@ -313,11 +316,11 @@ def test_nested_list_rejects_inverted_date_range() -> None:
 
 
 def test_duplicate_sensor_timestamp_returns_conflict() -> None:
-    first = create_nested("TEMP-01", 10.0, "2026-07-01T00:00:00")
+    first = create_nested("TEMP-01", 10.0, "2026-07-01T00:00:00Z")
     repeated_value_different_time = create_nested(
-        "TEMP-01", 10.0, "2026-07-01T00:01:00"
+        "TEMP-01", 10.0, "2026-07-01T00:01:00Z"
     )
-    conflict = create_nested("TEMP-01", 20.0, "2026-07-01T00:00:00")
+    conflict = create_nested("TEMP-01", 20.0, "2026-07-01T00:00:00Z")
 
     assert first.status_code == 201
     assert repeated_value_different_time.status_code == 201

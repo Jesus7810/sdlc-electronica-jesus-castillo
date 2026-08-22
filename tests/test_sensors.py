@@ -17,11 +17,23 @@ def sensor_payload(sensor_id: str = "TEMP-01") -> dict[str, object]:
     return {
         "id": sensor_id,
         "name": "Temperatura del laboratorio",
+        "location": "Laboratorio A",
         "type": "temperature",
         "unit": "C",
         "min_value": -40.0,
+        "low_critical_threshold": 0.0,
+        "low_warning_threshold": 10.0,
+        "high_warning_threshold": 30.0,
+        "high_critical_threshold": 40.0,
         "max_value": 125.0,
-        "threshold": 30.0,
+    }
+
+
+def sensor_response_payload(sensor_id: str = "TEMP-01") -> dict[str, object]:
+    return {
+        **sensor_payload(sensor_id),
+        "is_active": True,
+        "deactivated_at": None,
     }
 
 
@@ -36,9 +48,9 @@ def test_create_list_and_get_sensor() -> None:
     created = client.post("/sensors", json=sensor_payload())
 
     assert created.status_code == 201
-    assert created.json() == sensor_payload()
-    assert client.get("/sensors").json() == [sensor_payload()]
-    assert client.get("/sensors/TEMP-01").json() == sensor_payload()
+    assert created.json() == sensor_response_payload()
+    assert client.get("/sensors").json() == [sensor_response_payload()]
+    assert client.get("/sensors/TEMP-01").json() == sensor_response_payload()
 
 
 def test_duplicate_sensor_id_returns_409() -> None:
@@ -69,20 +81,6 @@ def test_patch_sensor_updates_only_sent_fields() -> None:
     assert response.json()["max_value"] == 125.0
 
 
-def test_delete_sensor() -> None:
-    client.post("/sensors", json=sensor_payload())
-
-    response = client.delete("/sensors/TEMP-01")
-
-    assert response.status_code == 204
-    assert response.content == b""
-    assert client.get("/sensors/TEMP-01").status_code == 404
-
-
-def test_delete_unknown_sensor_returns_404() -> None:
-    assert client.delete("/sensors/UNKNOWN").status_code == 404
-
-
 def test_rejects_invalid_sensor_range() -> None:
     payload = sensor_payload()
     payload["min_value"] = 125.0
@@ -105,11 +103,15 @@ def test_humidity_accepts_percent_unit() -> None:
     payload = {
         "id": "HUM-01",
         "name": "Humedad",
+        "location": "Laboratorio A",
         "type": "humidity",
         "unit": "%",
         "min_value": 0.0,
+        "low_critical_threshold": 10.0,
+        "low_warning_threshold": 20.0,
+        "high_warning_threshold": 80.0,
+        "high_critical_threshold": 90.0,
         "max_value": 100.0,
-        "threshold": 80.0,
     }
 
     assert client.post("/sensors", json=payload).status_code == 201
@@ -119,11 +121,15 @@ def test_humidity_reading_rejects_celsius_unit() -> None:
     payload = {
         "id": "HUM-01",
         "name": "Humedad",
+        "location": "Laboratorio A",
         "type": "humidity",
         "unit": "%",
         "min_value": 0.0,
+        "low_critical_threshold": 10.0,
+        "low_warning_threshold": 20.0,
+        "high_warning_threshold": 80.0,
+        "high_critical_threshold": 90.0,
         "max_value": 100.0,
-        "threshold": 80.0,
     }
     assert client.post("/sensors", json=payload).status_code == 201
 
@@ -198,7 +204,7 @@ def test_reading_create_rejects_malformed_timestamp() -> None:
     assert response.status_code == 422
 
 
-def test_list_readings_rejects_mixed_naive_and_aware_dates() -> None:
+def test_list_readings_rejects_naive_date_filter() -> None:
     client.post("/sensors", json=sensor_payload())
 
     response = client.get(
@@ -209,7 +215,7 @@ def test_list_readings_rejects_mixed_naive_and_aware_dates() -> None:
         },
     )
 
-    assert response.status_code == 400
+    assert response.status_code == 422
 
 
 def test_integrated_sensor_reading_flow() -> None:
@@ -258,7 +264,7 @@ def test_rejected_reading_is_not_persisted(
     "changes",
     [{"unit": "%"}, {"value": 126.0}],
 )
-def test_patch_reading_revalidates_sensor_rules(
+def test_patch_reading_is_not_part_of_the_public_contract(
     changes: dict[str, object],
 ) -> None:
     client.post("/sensors", json=sensor_payload())
@@ -269,7 +275,7 @@ def test_patch_reading_revalidates_sensor_rules(
 
     response = client.patch(f"/readings/{created.json()['id']}", json=changes)
 
-    assert response.status_code == 400
+    assert response.status_code == 405
     persisted = client.get(f"/readings/{created.json()['id']}").json()
     assert persisted["value"] == 20.0
     assert persisted["unit"] == "C"
@@ -292,6 +298,10 @@ def test_patch_type_and_unit_without_readings() -> None:
             "type": "humidity",
             "unit": "%",
             "min_value": 0.0,
+            "low_critical_threshold": 10.0,
+            "low_warning_threshold": 20.0,
+            "high_warning_threshold": 80.0,
+            "high_critical_threshold": 90.0,
             "max_value": 100.0,
         },
     )
@@ -338,7 +348,17 @@ def test_patch_range_rejects_excluded_historical_reading() -> None:
         json={"value": 20.0, "unit": "C"},
     )
 
-    response = client.patch("/sensors/TEMP-01", json={"min_value": 21.0})
+    response = client.patch(
+        "/sensors/TEMP-01",
+        json={
+            "min_value": 21.0,
+            "low_critical_threshold": 30.0,
+            "low_warning_threshold": 40.0,
+            "high_warning_threshold": 60.0,
+            "high_critical_threshold": 70.0,
+            "max_value": 100.0,
+        },
+    )
 
     assert response.status_code == 409
 
@@ -352,21 +372,17 @@ def test_patch_range_accepts_all_historical_readings() -> None:
 
     response = client.patch(
         "/sensors/TEMP-01",
-        json={"min_value": 0.0, "max_value": 100.0},
+        json={
+            "min_value": 0.0,
+            "low_critical_threshold": 10.0,
+            "low_warning_threshold": 15.0,
+            "high_warning_threshold": 30.0,
+            "high_critical_threshold": 40.0,
+            "max_value": 100.0,
+        },
     )
 
     assert response.status_code == 200
-
-
-def test_delete_sensor_cascades_to_readings() -> None:
-    client.post("/sensors", json=sensor_payload())
-    created = client.post(
-        "/sensors/TEMP-01/readings",
-        json={"value": 20.0, "unit": "C"},
-    )
-
-    assert client.delete("/sensors/TEMP-01").status_code == 204
-    assert client.get(f"/readings/{created.json()['id']}").status_code == 404
 
 
 def test_legacy_create_requires_existing_sensor() -> None:
@@ -396,53 +412,14 @@ def test_openapi_contains_required_routes() -> None:
     } <= paths.keys()
 
 
-def test_create_sensor_persists_threshold() -> None:
+def test_create_sensor_persists_high_warning_threshold() -> None:
     payload = sensor_payload()
-    payload["threshold"] = 30.0
+    payload["high_warning_threshold"] = 35.0
 
     response = client.post("/sensors", json=payload)
 
     assert response.status_code == 201
-    assert response.json()["threshold"] == 30.0
+    assert response.json()["high_warning_threshold"] == 35.0
 
     persisted = client.get("/sensors/TEMP-01")
-    assert persisted.json()["threshold"] == 30.0
-
-
-def test_reading_above_threshold_creates_queryable_alert() -> None:
-    client.post("/sensors", json=sensor_payload())
-
-    reading_response = client.post(
-        "/sensors/TEMP-01/readings",
-        json={"value": 31.0, "unit": "C"},
-    )
-
-    assert reading_response.status_code == 201
-
-    response = client.get("/alerts")
-
-    assert response.status_code == 200
-    assert len(response.json()) == 1
-
-    alert = response.json()[0]
-    assert alert["sensor_id"] == "TEMP-01"
-    assert alert["reading_id"] == reading_response.json()["id"]
-    assert alert["reading_value"] == 31.0
-    assert alert["threshold"] == 30.0
-    assert "created_at" in alert
-
-
-def test_reading_at_threshold_does_not_create_alert() -> None:
-    client.post("/sensors", json=sensor_payload())
-
-    reading_response = client.post(
-        "/sensors/TEMP-01/readings",
-        json={"value": 30.0, "unit": "C"},
-    )
-
-    assert reading_response.status_code == 201
-
-    response = client.get("/alerts")
-
-    assert response.status_code == 200
-    assert response.json() == []
+    assert persisted.json()["high_warning_threshold"] == 35.0
