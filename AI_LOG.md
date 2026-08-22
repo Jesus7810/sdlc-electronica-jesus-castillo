@@ -181,3 +181,32 @@ las pruebas y las verificaciones locales antes de integrarlas.
 - La validación remota del workflow de CI y del despliegue no se puede confirmar
   hasta publicar los commits; no se afirma un despliegue público activo sin esa
   verificación.
+
+## 2026-08-22 — Cierre técnico de RNF-5 y rúbrica
+
+Se realizó una auditoría literal contra RNF-5 y la rúbrica de Semana 6 para
+cerrar configuración, manejo de errores y observabilidad sin ampliar el
+contrato funcional de SensorHub.
+
+### Decisiones y endurecimiento
+
+- `DATABASE_URL` pasó a ser un requisito explícito para iniciar la aplicación
+  y ejecutar Alembic; las pruebas establecen su configuración antes de importar
+  la aplicación.
+- Se incorporó un `JsonFormatter` basado solo en la biblioteca estándar. Usa una
+  lista permitida de campos y valores primitivos seguros, sin serializar
+  mensajes de excepciones ni objetos arbitrarios.
+- Los handlers globales centralizan la traducción de excepciones de dominio y
+  protegen las excepciones inesperadas con una respuesta 500 genérica. El
+  `ValueError` existente en el registro de lecturas se conserva local de forma
+  intencional para no ocultar errores de programación como solicitudes 400.
+- `/ready` y `/metrics` mantienen su respuesta segura ante indisponibilidad de
+  base de datos y registran eventos JSON estructurados.
+- El logger `app` no propaga al root ni a handlers de Uvicorn: cada evento de
+  aplicación se emite una sola vez mediante su handler JSON.
+
+### Verificación
+
+- Se aprobaron 229 pruebas con 97.09 % de cobertura.
+- Se ejecutaron Ruff, mypy y `git diff --check` sin incidencias.
+- La evidencia de este incremento no incluye secretos ni información de Render.
