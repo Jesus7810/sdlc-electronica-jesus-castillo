@@ -28,4 +28,69 @@ jobs:
         run: python -m mypy app
 
       - name: Ejecutar pruebas
-        run: python -m pytest
+        run: python -m pytest -v
+
+  postgres-migrations:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql+psycopg://sensorhub_ci:ci_not_a_secret@localhost:5432/sensorhub_ci
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sensorhub_ci
+          POSTGRES_PASSWORD: ci_not_a_secret
+          POSTGRES_DB: sensorhub_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sensorhub_ci -d sensorhub_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: python -m pip install -r requirements.txt
+
+      - name: Esperar PostgreSQL
+        run: |
+          python - <<'PY'
+          import os
+          import time
+
+          from sqlalchemy import create_engine, text
+
+          engine = create_engine(os.environ["DATABASE_URL"])
+          try:
+              last_error = None
+              for _ in range(30):
+                  try:
+                      with engine.connect() as connection:
+                          connection.execute(text("SELECT 1"))
+                      break
+                  except Exception as error:
+                      last_error = error
+                      time.sleep(1)
+              else:
+                  raise RuntimeError(
+                      "PostgreSQL no estuvo disponible a tiempo"
+                  ) from last_error
+          finally:
+              engine.dispose()
+          PY
+
+      - name: Aplicar migraciones Alembic
+        run: python -m alembic upgrade head
+
+      - name: Comprobar revisión Alembic actual
+        run: python -m alembic current --check-heads
