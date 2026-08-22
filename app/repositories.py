@@ -1,10 +1,16 @@
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.domain import AlertCondition, AlertSeverity, AlertStatus, Anomaly
+from app.domain import (
+    AlertCondition,
+    AlertSeverity,
+    AlertStatus,
+    Anomaly,
+    ReadingAggregate,
+)
 from app.models import AlertModel, ReadingModel, SensorModel
 
 
@@ -125,6 +131,42 @@ class SqlAlchemyReadingRepository:
         reading_id: int,
     ) -> ReadingModel | None:
         return self._db.get(ReadingModel, reading_id)
+
+    def statistics(
+        self,
+        sensor_id: str,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
+    ) -> ReadingAggregate:
+        statement = select(
+            func.count(ReadingModel.id).label("count"),
+            func.min(ReadingModel.value).label("min_value"),
+            func.max(ReadingModel.value).label("max_value"),
+            func.avg(ReadingModel.value).label("average_value"),
+        ).where(ReadingModel.sensor_id == sensor_id)
+        if from_date is not None:
+            statement = statement.where(ReadingModel.timestamp >= from_date)
+        if to_date is not None:
+            statement = statement.where(ReadingModel.timestamp <= to_date)
+        result = self._db.execute(statement).one()._mapping
+        return ReadingAggregate(
+            count=int(result["count"]),
+            min_value=(
+                float(result["min_value"])
+                if result["min_value"] is not None
+                else None
+            ),
+            max_value=(
+                float(result["max_value"])
+                if result["max_value"] is not None
+                else None
+            ),
+            average_value=(
+                float(result["average_value"])
+                if result["average_value"] is not None
+                else None
+            ),
+        )
 
 class SqlAlchemyAlertRepository:
     """Implementa la persistencia de alertas mediante SQLAlchemy."""

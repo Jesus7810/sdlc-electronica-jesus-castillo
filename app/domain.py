@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 from typing import Literal
 
@@ -27,6 +28,26 @@ class Anomaly:
     condition: AlertCondition
     severity: AlertSeverity
     threshold: float
+
+
+@dataclass(frozen=True)
+class ReadingAggregate:
+    count: int
+    min_value: float | None
+    max_value: float | None
+    average_value: float | None
+
+
+@dataclass(frozen=True)
+class SensorReadingStatistics:
+    sensor_id: str
+    unit: str
+    from_timestamp: datetime | None
+    to_timestamp: datetime | None
+    count: int
+    min_value: float | None
+    max_value: float | None
+    average_value: float | None
 
 
 def classify_anomaly(

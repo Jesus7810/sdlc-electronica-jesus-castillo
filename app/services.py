@@ -10,8 +10,10 @@ from app.domain import (
     AlertStatus,
     Anomaly,
     DomainValidationError,
+    ReadingAggregate,
     ResourceConflictError,
     ResourceNotFoundError,
+    SensorReadingStatistics,
     classify_anomaly,
     validate_sensor_configuration,
 )
@@ -196,6 +198,13 @@ class ReadingRepository(Protocol):
         reading_id: int,
     ) -> ReadingModel | None: ...
 
+    def statistics(
+        self,
+        sensor_id: str,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
+    ) -> ReadingAggregate: ...
+
 class AlertRepository(Protocol):
     def open_or_update(
         self, reading: ReadingModel, anomaly: Anomaly
@@ -375,6 +384,50 @@ class ReadingService:
         from_date: datetime | None = None,
         to_date: datetime | None = None,
     ) -> list[ReadingModel]:
+        normalized_from, normalized_to = self._normalize_date_range(
+            from_date,
+            to_date,
+        )
+        return self._repo.list(
+            sensor_id,
+            offset,
+            limit,
+            normalized_from,
+            normalized_to,
+        )
+
+    def statistics(
+        self,
+        sensor_id: str,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
+    ) -> SensorReadingStatistics:
+        sensor = self.require_sensor(sensor_id)
+        normalized_from, normalized_to = self._normalize_date_range(
+            from_date,
+            to_date,
+        )
+        aggregate = self._repo.statistics(
+            sensor_id,
+            normalized_from,
+            normalized_to,
+        )
+        return SensorReadingStatistics(
+            sensor_id=sensor.id,
+            unit=sensor.unit,
+            from_timestamp=normalized_from,
+            to_timestamp=normalized_to,
+            count=aggregate.count,
+            min_value=aggregate.min_value,
+            max_value=aggregate.max_value,
+            average_value=aggregate.average_value,
+        )
+
+    def _normalize_date_range(
+        self,
+        from_date: datetime | None,
+        to_date: datetime | None,
+    ) -> tuple[datetime | None, datetime | None]:
         normalized_from = (
             self._normalize_utc_timestamp(from_date)
             if from_date is not None
@@ -388,13 +441,7 @@ class ReadingService:
                 raise InvalidDateRangeError(
                     "El parámetro 'from' no puede ser posterior a 'to'"
                 )
-        return self._repo.list(
-            sensor_id,
-            offset,
-            limit,
-            normalized_from,
-            normalized_to,
-        )
+        return normalized_from, normalized_to
 
 
 class InvalidDateRangeError(ValueError):

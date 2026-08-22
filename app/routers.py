@@ -26,6 +26,7 @@ from app.schemas import (
     SensorReadingCreate,
     SensorReadingIn,
     SensorReadingOut,
+    SensorReadingStatisticsOut,
     SensorUpdate,
 )
 from app.services import (
@@ -327,6 +328,27 @@ def list_sensor_readings(
     except InvalidDateRangeError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     return [reading_out(reading) for reading in readings]
+
+
+@router.get(
+    "/sensors/{sensor_id}/readings/statistics",
+    response_model=SensorReadingStatisticsOut,
+)
+def get_sensor_reading_statistics(
+    sensor_id: str,
+    service: Annotated[ReadingService, Depends(get_reading_service)],
+    from_date: Annotated[datetime | None, Query(alias="from")] = None,
+    to_date: Annotated[datetime | None, Query(alias="to")] = None,
+) -> SensorReadingStatisticsOut:
+    try:
+        statistics = service.statistics(sensor_id, from_date, to_date)
+    except ResourceNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except InvalidTimestampError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except InvalidDateRangeError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return SensorReadingStatisticsOut.model_validate(statistics)
 
 
 @router.get("/readings", response_model=list[SensorReadingOut])

@@ -123,6 +123,28 @@ class SensorReadingOut(SensorReadingIn):
         return value.astimezone(UTC)
 
 
+class SensorReadingStatisticsOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    sensor_id: str
+    unit: str
+    from_timestamp: datetime | None
+    to_timestamp: datetime | None
+    count: int
+    min_value: float | None
+    max_value: float | None
+    average_value: float | None
+
+    @field_validator("from_timestamp", "to_timestamp", mode="before")
+    @classmethod
+    def normalize_output_timestamp(cls, value: object) -> object:
+        if not isinstance(value, datetime):
+            return value
+        if value.tzinfo is None or value.utcoffset() is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
+
+
 class AlertOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
