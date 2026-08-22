@@ -1,7 +1,9 @@
+import logging
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -9,6 +11,7 @@ from app.domain import (
     AlertCondition,
     AlertSeverity,
     AlertStatus,
+    DatabaseUnavailableError,
     DomainValidationError,
     ResourceConflictError,
     ResourceNotFoundError,
@@ -16,6 +19,7 @@ from app.domain import (
 from app.models import AlertModel, ReadingModel, SensorModel
 from app.repositories import (
     SqlAlchemyAlertRepository,
+    SqlAlchemyOperationalRepository,
     SqlAlchemyReadingRepository,
     SqlAlchemySensorRepository,
 )
@@ -36,6 +40,8 @@ from app.services import (
     DatabaseAlertStrategy,
     InvalidDateRangeError,
     InvalidTimestampError,
+    OperationalRepository,
+    OperationalService,
     ReadingConflictError,
     ReadingRepository,
     ReadingService,
@@ -44,6 +50,7 @@ from app.services import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def get_sensor_repository(
@@ -62,6 +69,18 @@ def get_alert_repository(
     db: Annotated[Session, Depends(get_db)],
 ) -> AlertRepository:
     return SqlAlchemyAlertRepository(db)
+
+
+def get_operational_repository(
+    db: Annotated[Session, Depends(get_db)],
+) -> OperationalRepository:
+    return SqlAlchemyOperationalRepository(db)
+
+
+def get_operational_service(
+    repo: Annotated[OperationalRepository, Depends(get_operational_repository)],
+) -> OperationalService:
+    return OperationalService(repo)
 
 
 def get_alert_strategy(
@@ -166,6 +185,55 @@ def resolve_alert(
 @router.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@router.get("/ready")
+def ready(
+    service: Annotated[OperationalService, Depends(get_operational_service)],
+) -> Response:
+    try:
+        service.ready()
+    except DatabaseUnavailableError:
+        logger.error("database_unavailable", extra={"endpoint": "ready"})
+        return JSONResponse(status_code=503, content={"status": "unavailable"})
+    return JSONResponse(status_code=200, content={"status": "ready"})
+
+
+def prometheus_metrics(
+    active_sensors: int,
+    registered_readings: int,
+    unresolved_alerts: int,
+) -> str:
+    return (
+        "# HELP sensorhub_active_sensors Current number of active sensors.\n"
+        "# TYPE sensorhub_active_sensors gauge\n"
+        f"sensorhub_active_sensors {active_sensors}\n"
+        "# HELP sensorhub_registered_readings Current number of persisted readings.\n"
+        "# TYPE sensorhub_registered_readings gauge\n"
+        f"sensorhub_registered_readings {registered_readings}\n"
+        "# HELP sensorhub_unresolved_alerts Current number of unresolved alerts.\n"
+        "# TYPE sensorhub_unresolved_alerts gauge\n"
+        f"sensorhub_unresolved_alerts {unresolved_alerts}\n"
+    )
+
+
+@router.get("/metrics")
+def metrics(
+    service: Annotated[OperationalService, Depends(get_operational_service)],
+) -> Response:
+    try:
+        snapshot = service.metrics()
+    except DatabaseUnavailableError:
+        logger.error("database_unavailable", extra={"endpoint": "metrics"})
+        return JSONResponse(status_code=503, content={"status": "unavailable"})
+    return Response(
+        content=prometheus_metrics(
+            snapshot.active_sensors,
+            snapshot.registered_readings,
+            snapshot.unresolved_alerts,
+        ),
+        media_type="text/plain; version=0.0.4",
+    )
 
 
 @router.post("/sensors", response_model=SensorOut, status_code=201)

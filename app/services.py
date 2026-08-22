@@ -10,6 +10,7 @@ from app.domain import (
     AlertStatus,
     Anomaly,
     DomainValidationError,
+    OperationalMetrics,
     ReadingAggregate,
     ResourceConflictError,
     ResourceNotFoundError,
@@ -225,6 +226,23 @@ class AlertRepository(Protocol):
         offset: int,
         limit: int,
     ) -> list[AlertModel]: ...
+
+
+class OperationalRepository(Protocol):
+    def ping(self) -> None: ...
+
+    def metrics(self) -> OperationalMetrics: ...
+
+
+class OperationalService:
+    def __init__(self, repo: OperationalRepository) -> None:
+        self._repo = repo
+
+    def ready(self) -> None:
+        self._repo.ping()
+
+    def metrics(self) -> OperationalMetrics:
+        return self._repo.metrics()
 
 
 class AlertStrategy(Protocol):

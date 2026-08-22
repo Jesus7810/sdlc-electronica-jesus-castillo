@@ -1,14 +1,19 @@
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
-from sqlalchemy import Select, func, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import Select, func, select, text
+from sqlalchemy.engine import Result
+from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError, TimeoutError
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.base import Executable
 
 from app.domain import (
     AlertCondition,
     AlertSeverity,
     AlertStatus,
     Anomaly,
+    DatabaseUnavailableError,
+    OperationalMetrics,
     ReadingAggregate,
 )
 from app.models import AlertModel, ReadingModel, SensorModel
@@ -167,6 +172,83 @@ class SqlAlchemyReadingRepository:
                 else None
             ),
         )
+
+
+class SqlAlchemyOperationalRepository:
+    """Consulta el estado operativo sin cargar entidades de dominio."""
+
+    def __init__(self, db: Session) -> None:
+        self._db = db
+
+    @staticmethod
+    def _is_infrastructure_failure(error: DBAPIError) -> bool:
+        if error.connection_invalidated:
+            return True
+        if not isinstance(error, OperationalError):
+            return False
+        message = str(error.orig).lower()
+        infrastructure_markers = (
+            "connection refused",
+            "connection reset",
+            "connection timed out",
+            "connection timeout",
+            "could not connect",
+            "could not translate host name",
+            "could not resolve hostname",
+            "name or service not known",
+            "temporary failure in name resolution",
+            "network is unreachable",
+            "no route to host",
+            "server closed",
+            "timeout expired",
+            "unable to open database file",
+        )
+        return any(marker in message for marker in infrastructure_markers)
+
+    def _execute_operational_query(self, statement: Executable) -> Result[Any]:
+        try:
+            return self._db.execute(statement)
+        except TimeoutError as error:
+            raise DatabaseUnavailableError from error
+        except DBAPIError as error:
+            if self._is_infrastructure_failure(error):
+                raise DatabaseUnavailableError from error
+            raise
+
+    def ping(self) -> None:
+        self._execute_operational_query(text("SELECT 1"))
+
+    def metrics(self) -> OperationalMetrics:
+        active_sensors = (
+            select(func.count(SensorModel.id))
+            .where(SensorModel.is_active.is_(True))
+            .scalar_subquery()
+        )
+        registered_readings = select(func.count(ReadingModel.id)).scalar_subquery()
+        unresolved_alerts = (
+            select(func.count(AlertModel.id))
+            .where(
+                AlertModel.status.in_(
+                    [
+                        AlertStatus.OPEN.value,
+                        AlertStatus.ACKNOWLEDGED.value,
+                    ]
+                )
+            )
+            .scalar_subquery()
+        )
+        statement = select(
+            active_sensors.label("active_sensors"),
+            registered_readings.label("registered_readings"),
+            unresolved_alerts.label("unresolved_alerts"),
+        )
+        result = self._execute_operational_query(statement).one()._mapping
+        return OperationalMetrics(
+            active_sensors=int(result["active_sensors"]),
+            registered_readings=int(result["registered_readings"]),
+            unresolved_alerts=int(result["unresolved_alerts"]),
+        )
+
 
 class SqlAlchemyAlertRepository:
     """Implementa la persistencia de alertas mediante SQLAlchemy."""

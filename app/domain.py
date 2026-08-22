@@ -50,6 +50,13 @@ class SensorReadingStatistics:
     average_value: float | None
 
 
+@dataclass(frozen=True)
+class OperationalMetrics:
+    active_sensors: int
+    registered_readings: int
+    unresolved_alerts: int
+
+
 def classify_anomaly(
     value: float,
     low_critical_threshold: float,
@@ -119,3 +126,7 @@ class ResourceNotFoundError(Exception):
 
 class ResourceConflictError(Exception):
     """Indica un conflicto con el estado persistido."""
+
+
+class DatabaseUnavailableError(Exception):
+    """Indica una indisponibilidad de infraestructura de base de datos."""
