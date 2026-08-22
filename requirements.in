@@ -1,0 +1,16 @@
+# Mantenimiento: este lock se genera para Python 3.12.
+# Herramienta validada: pip-tools==7.6.1.
+# Comando canónico: pip-compile --generate-hashes --strip-extras --output-file=requirements.txt requirements.in
+fastapi
+uvicorn[standard]
+# uvicorn[standard] necesita este marcador al generar el lock en Linux para no exigir uvloop en Windows.
+uvloop; sys_platform != "win32"
+sqlalchemy
+alembic
+pytest
+pytest-cov
+httpx
+ruff
+mypy
+pre-commit
+psycopg[binary]

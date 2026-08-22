@@ -81,13 +81,18 @@ source .venv/bin/activate
 Después instala dependencias, aplica el esquema e inicia la API:
 
 ```bash
-python -m pip install -r requirements.txt
+python -m pip install --require-hashes -r requirements.txt
 python -m alembic upgrade head
 python -m uvicorn app.main:app --reload
 ```
 
 La API queda disponible en `http://127.0.0.1:8000`; la documentación interactiva
 está en `http://127.0.0.1:8000/docs`.
+
+Las dependencias directas se mantienen en `requirements.in`. El archivo
+`requirements.txt` es el lock generado con versiones exactas y hashes; se
+actualiza de forma deliberada en Python 3.12 y es el único archivo que deben
+instalar Docker, CI y los entornos locales.
 
 > **Advertencia de migración:** las migraciones de configuración v2 y ciclo de
 > vida se diseñaron para una base histórica vacía. No ejecutes `alembic upgrade
