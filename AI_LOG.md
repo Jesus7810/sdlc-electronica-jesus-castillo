@@ -100,3 +100,84 @@ Render; revisar configuraciones; diagnosticar errores y preparar verificaciones.
 Las decisiones se validaron mediante ejecución local, pruebas automatizadas,
 GitHub Actions, revisión de Git y comprobación del despliegue público antes de
 integrar los cambios.
+
+# Semana 6 — Proyecto final SensorHub
+
+## 2026-08-21
+
+Durante la Semana 6 se evolucionó SensorHub desde el integrador inicial hacia
+una API de telemetría IoT con contratos de dominio, persistencia reproducible y
+observabilidad operativa. La IA se utilizó como apoyo para análisis, diseño,
+pruebas, revisión y documentación; las decisiones se contrastaron con el código,
+las pruebas y las verificaciones locales antes de integrarlas.
+
+### Decisiones de dominio y configuración v2
+
+- Se añadió `location` obligatoria y se separaron los límites físicos de los
+  cuatro umbrales operativos del sensor.
+- La configuración exige la cadena estricta `min_value < low_critical_threshold
+  < low_warning_threshold < high_warning_threshold <
+  high_critical_threshold < max_value`.
+- Se documentó la política de ciclo de vida y alertas en el ADR 0002: los
+  sensores se desactivan lógicamente, las lecturas son hechos inmutables y los
+  timestamps se manejan en UTC.
+
+### Ciclo de vida, lecturas y alertas
+
+- Se implementaron activación y desactivación idempotentes. Los sensores
+  inactivos conservan lecturas y alertas, pero rechazan nueva ingesta.
+- Se retiró del contrato público la edición y eliminación de lecturas; los
+  timestamps explícitos requieren zona horaria y se normalizan a UTC.
+- Se incorporó la clasificación pura de anomalías y Alertas v2 con condición,
+  severidad, evidencia de origen, última evidencia y escalamiento.
+- Se completó el ciclo `open`, `acknowledged`, `resolved`, con deduplicación de
+  alertas no resueltas, reapertura ante escalamiento crítico y manejo de la
+  carrera de apertura mediante transacción anidada y recuperación de la alerta
+  ganadora.
+
+### Estadísticas y observabilidad
+
+- Se añadieron estadísticas por sensor calculadas con agregados SQL: cantidad,
+  mínimo, máximo y promedio, incluidas las lecturas históricas de sensores
+  inactivos.
+- Se separaron liveness, readiness y métricas: `/health` no consulta la base,
+  `/ready` verifica disponibilidad de base de datos y `/metrics` publica gauges
+  Prometheus de sensores activos, lecturas registradas y alertas no resueltas.
+- El ADR 0003 aclara la separación de responsabilidades de observabilidad que
+  sustituye la afirmación anterior de ADR 0002 sobre `/health`.
+
+### PostgreSQL, Alembic, Docker Compose y CI
+
+- Se verificaron migraciones Alembic de manera aislada en SQLite y PostgreSQL.
+  Las conversiones de timestamps heredados a PostgreSQL interpretan los valores
+  anteriores explícitamente como UTC.
+- Docker Compose pasó a usar el flujo `db → migrate → api`: PostgreSQL debe estar
+  healthy, el migrador único termina con éxito y después inicia Uvicorn. La API
+  reutiliza la imagen local sin ejecutar Alembic una segunda vez.
+- Se ejecutaron smoke tests aislados con PostgreSQL en contenedores, validando la
+  revisión Alembic final, `/health`, `/ready`, `/metrics` y las restricciones
+  relevantes del esquema.
+- CI conserva calidad y pruebas con SQLite, y añade un job independiente que
+  levanta PostgreSQL 16 limpio, comprueba `SELECT 1`, aplica `alembic upgrade
+  head` y verifica que la revisión está en la cabeza.
+
+### Verificaciones principales
+
+- La suite completa se ejecutó con el intérprete del proyecto: 214 pruebas
+  aprobadas y cobertura superior al mínimo requerido de 80 %.
+- Ruff y mypy se ejecutaron sobre la configuración real del repositorio.
+- Se comprobaron upgrades y downgrades en bases temporales aisladas cuando cada
+  incremento modificó el esquema, sin usar la base local de desarrollo ni una
+  base remota.
+
+### Limitaciones conocidas
+
+- Render free no dispone de un `preDeployCommand`; el Dockerfile conserva
+  temporalmente la migración al arranque para una sola instancia. Antes de
+  escalar se requiere un release job o bloqueo de migraciones.
+- Las migraciones de configuración v2 y ciclo de vida asumen una base histórica
+  vacía. Una base anterior requiere respaldo y un plan específico de datos antes
+  de aplicar esas revisiones.
+- La validación remota del workflow de CI y del despliegue no se puede confirmar
+  hasta publicar los commits; no se afirma un despliegue público activo sin esa
+  verificación.
